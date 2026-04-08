@@ -49,4 +49,3 @@ def readiness() -> JSONResponse:
         "redis": {"ok": redis_ok, "error": redis_error},
     }
     return JSONResponse(status_code=200 if ready else 503, content=payload)
-

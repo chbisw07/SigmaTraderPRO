@@ -3,20 +3,15 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = BACKEND_ROOT / ".env"
 
-load_dotenv(ENV_FILE)
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=ENV_FILE,
-        env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
@@ -25,6 +20,16 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", validation_alias="APP_ENV")
     app_host: str = Field(default="127.0.0.1", validation_alias="APP_HOST")
     app_port: int = Field(default=8000, validation_alias="APP_PORT")
+
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    log_format: str = Field(default="json", validation_alias="LOG_FORMAT")
+    log_dir: Path = Field(default=BACKEND_ROOT / ".logs", validation_alias="LOG_DIR")
+    audit_csv_dir: Path = Field(
+        default=BACKEND_ROOT / ".audit", validation_alias="AUDIT_CSV_DIR"
+    )
+    audit_csv_max_bytes: int = Field(
+        default=10 * 1024 * 1024, validation_alias="AUDIT_CSV_MAX_BYTES"
+    )
 
     database_url: str = Field(
         default="postgresql+psycopg://sigmatrader:sigmatrader@127.0.0.1:5432/sigmatraderpro",
@@ -38,7 +43,8 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    env_file = ENV_FILE if ENV_FILE.exists() else None
+    return Settings(_env_file=env_file, _env_file_encoding="utf-8")
 
 
 settings = get_settings()

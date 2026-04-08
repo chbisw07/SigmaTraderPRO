@@ -66,3 +66,43 @@ _Bounded foundation refinement (no new milestone features)._
 - Established a multi-theme token system via CSS variables (`data-theme` + `dark` class)
 - Introduced theme options: `system`, `light`, `light-soft`, `dark`, `dark-trading`
 - Polished sidebar (active highlight, density, branding) and header (page title, dev badge, theme control)
+
+---
+
+## S1.4 Quality + Developer Tooling Baseline
+
+### Completed
+- Added backend Python quality baseline with Ruff (lint + format) and Pytest
+- Added backend test structure with passing smoke tests for `/health` and `/health/ready` (graceful when dependencies are unavailable)
+- Added repo-level `Makefile` commands for infra, backend, frontend, and aggregate quality gates
+- Added lightweight pre-commit baseline (Ruff + basic hygiene hooks)
+- Documented local developer workflow and quality commands in `README.md`
+
+### Important highlights
+- Tooling is intentionally minimal and host-run; no CI introduced in S1.4
+- Ruff is the single source of truth for backend lint + formatting
+- `make check` provides a stable “run the quality gates” entrypoint for future work
+
+### Next
+- S1.5+ implement feature slices with consistent `make check` cadence
+
+---
+
+## S1.5 Logging/Config Bootstrap
+
+### Completed
+- Expanded backend settings to include logging + audit configuration (env-driven with safe local defaults)
+- Added structured JSON logger baseline (stdlib `logging`) with a shared logger helper
+- Added sanitization helpers and enforced redaction of sensitive keys (password/token/secret/api_key/refresh_token/access_token)
+- Added CSV audit logger skeleton with frozen PRD naming baseline (`ST_YYYYMMDD.csv`, `ST_YYYYMMDD_02.csv`) and safe directory creation
+- Added safe startup diagnostics log event (no secrets, no raw DB URLs) and kept existing health endpoints unchanged
+- Added focused tests for config load, logger init, sanitization, and CSV audit writer
+
+### Important highlights
+- Structured logs are the engineering truth; CSV audit files are the operator convenience layer (frozen PRD convention)
+- Startup diagnostics intentionally log “configured yes/no” for DB/Redis rather than connection details or secrets
+- CSV audit rotation-by-size is supported at a minimal baseline level; no business event coupling yet
+
+### Next
+- Introduce correlation IDs across request flows (future S2+/S5 workstream)
+- Expand CSV audit usage for webhook/order lifecycle once domain features begin

@@ -15,6 +15,10 @@ dist/
 .env
 .env.*
 
+# Local runtime output
+.logs/
+.audit/
+
 # IDE
 .vscode/
 .idea/
@@ -36,3 +40,5 @@ Thumbs.db
 htmlcov/
 coverage/
 
+# LibreOffice / editor lock files
+.~lock.*#

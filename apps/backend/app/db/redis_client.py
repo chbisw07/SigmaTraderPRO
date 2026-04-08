@@ -12,4 +12,3 @@ def get_redis() -> redis.Redis:
         socket_connect_timeout=1,
         socket_timeout=1,
     )
-
