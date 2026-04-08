@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: sigmatraderpro-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sigmatraderpro
+      POSTGRES_USER: sigmatrader
+      POSTGRES_PASSWORD: sigmatrader
+    ports:
+      - "5432:5432"
+    volumes:
+      - sigmatraderpro_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sigmatrader -d sigmatraderpro"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7
+    container_name: sigmatraderpro-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - sigmatraderpro_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  sigmatraderpro_postgres_data:
+    name: sigmatraderpro_postgres_data
+  sigmatraderpro_redis_data:
+    name: sigmatraderpro_redis_data
