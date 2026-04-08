@@ -38,3 +38,31 @@
 ### Next
 - S1.3 frontend shell
 - S1.4 auth bootstrap (depends on persistence + readiness foundation)
+
+---
+
+## S1.3 Frontend App Bootstrap
+
+### Completed
+- Initialized `apps/frontend` as a Vite + React + TypeScript app
+- Added Tailwind CSS and a minimal shadcn/ui foundation (CSS variables + `cn()` + baseline `Button`)
+- Wired React Router with placeholder routes/pages: Dashboard, Brokers, Strategies, Positions, Orders, Settings
+- Added Zustand (minimal UI store) and TanStack Query (QueryClientProvider)
+- Implemented a minimal app shell (sidebar + header + main outlet)
+- Added Vitest smoke render test and verified `lint`, `test`, and `build` are clean
+
+### Important highlights
+- Frontend remains host-run for development; no backend API integration yet
+- Routing is placeholder-only (no auth, no protected routes, no redirects)
+- Structure aligned for future feature slices: `src/app`, `src/routes`, `src/pages`, `src/components`, `src/store`
+
+### Next
+- S1.4 auth bootstrap (backend + frontend wiring later; not in S1.3)
+
+#### S1.3 Follow-up — Appearance + Themes + Shell Polish
+_Bounded foundation refinement (no new milestone features)._
+
+- Added appearance settings with local theme persistence (Zustand + localStorage)
+- Established a multi-theme token system via CSS variables (`data-theme` + `dark` class)
+- Introduced theme options: `system`, `light`, `light-soft`, `dark`, `dark-trading`
+- Polished sidebar (active highlight, density, branding) and header (page title, dev badge, theme control)
