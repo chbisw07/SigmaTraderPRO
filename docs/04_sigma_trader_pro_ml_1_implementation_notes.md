@@ -116,3 +116,38 @@ This document is the **single milestone-level implementation memory artifact** f
 
 ### Follow-up TODOs
 - Add refresh token persistence / revocation only if/when required by product/security posture.
+
+## 2026-04-09 — Sprint 2 / S2.2 — Frontend shell + status bar
+### Implemented
+- Login page (`/login`) wired to backend JWT login
+- Protected routing + auth-aware redirects (unauthenticated → login; authenticated → workspace)
+- Zustand auth store with local persistence (access/refresh + user identity) and bootstrap refresh handling
+- Auth-aware header (user menu + logout) integrated into the existing S1.3 shell
+- Persistent status bar scaffold wired to backend `/health` and frontend auth state
+
+### Files / Modules
+- `apps/frontend/src/pages/LoginPage.tsx`
+- `apps/frontend/src/store/authStore.ts`
+- `apps/frontend/src/lib/api/client.ts`
+- `apps/frontend/src/lib/api/auth.ts`
+- `apps/frontend/src/routes/router.tsx`
+- `apps/frontend/src/routes/RequireAuth.tsx`
+- `apps/frontend/src/components/shell/UserMenu.tsx`
+- `apps/frontend/src/components/status/StatusBar.tsx`
+- `apps/frontend/src/test/smoke.test.tsx`
+
+### API / DB / UI Changes
+- API: frontend now consumes `/api/v1/auth/login`, `/api/v1/auth/refresh`, `/api/v1/auth/me` and `/health`
+- DB: none (auth schema lives in S2.1)
+- UI: added login screen, protected shell routing, status bar baseline, and user menu logout
+
+### Tests / Quality Gates
+- ruff: `make backend-lint` (no backend changes required)
+- tests: `make frontend-test`
+- smoke checks: `make frontend-build`, `make check`
+
+### Notes / Deviations
+- Registration UI remains intentionally deferred; local/dev bootstrap uses backend `POST /api/v1/auth/register`.
+
+### Follow-up TODOs
+- Add a small “refresh-on-401” retry helper once protected API slices (brokers/orders/etc.) begin.

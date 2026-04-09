@@ -37,7 +37,7 @@ Runtime output (local, ignored by git):
 - backend logs: `apps/backend/.logs`
 - backend CSV audit: `apps/backend/.audit`
 
-Auth endpoints (backend only; frontend wiring is later):
+Auth endpoints (backend; frontend consumes in S2.2):
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/refresh`
@@ -48,11 +48,21 @@ From repo root:
 
 ```bash
 make frontend-install
+cp apps/frontend/.env.example apps/frontend/.env
 make frontend-dev
 ```
 
 Frontend URL:
 - `http://localhost:5173`
+
+Frontend env:
+- `apps/frontend/.env` supports `VITE_API_BASE_URL`
+  - default: empty (relative URLs via Vite dev proxy to `http://127.0.0.1:8000`)
+  - if set: backend must allow CORS for `http://localhost:5173`
+
+Auth (local/dev):
+- Create a dev user (backend): `POST /api/v1/auth/register`
+- Sign in (frontend): `http://localhost:5173/login`
 
 ## Quality gates
 

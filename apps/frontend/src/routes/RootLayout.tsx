@@ -1,6 +1,9 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, UserRound } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 
+import { TopNav } from '@/components/shell/TopNav'
+import { UserMenu } from '@/components/shell/UserMenu'
+import { StatusBar } from '@/components/status/StatusBar'
 import { ThemeSelect } from '@/components/appearance/ThemeSelect'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -78,26 +81,29 @@ export function RootLayout() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex h-14 items-center justify-between border-b bg-background px-4">
-            <div className="min-w-0">
-              <div className="truncate text-base font-semibold">{pageLabel}</div>
-              <div className="truncate text-xs text-muted-foreground">
-                SigmaTraderPRO • Desktop shell foundation
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-base font-semibold">{pageLabel}</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  SigmaTraderPRO • Workspace
+                </div>
               </div>
+              <TopNav />
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="hidden sm:inline-flex">
                 Dev
               </Badge>
               <ThemeSelect />
-              <Button variant="outline" size="icon" disabled aria-label="User menu">
-                <UserRound className="h-4 w-4" />
-              </Button>
+              <UserMenu />
             </div>
           </header>
 
           <main className="flex-1 p-4">
             <Outlet />
           </main>
+
+          <StatusBar />
         </div>
       </div>
     </div>
