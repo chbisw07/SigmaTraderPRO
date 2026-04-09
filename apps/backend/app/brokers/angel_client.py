@@ -19,6 +19,10 @@ class AngelAuthError(RuntimeError):
     pass
 
 
+class AngelOrderError(RuntimeError):
+    pass
+
+
 def _headers(api_key: str) -> dict[str, str]:
     return {
         "Content-Type": "application/json",
@@ -72,3 +76,57 @@ def login_by_password(
         refresh_token=str(refresh_token),
         feed_token=str(feed_token) if feed_token else None,
     )
+
+
+def place_order(
+    *,
+    api_key: str,
+    jwt_token: str,
+    exchange: str,
+    trading_symbol: str,
+    symbol_token: str,
+    transaction_type: str,
+    quantity: int,
+    product_type: str,
+    order_type: str,
+    price: float | None,
+) -> str:
+    url = "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/placeOrder"
+    payload: dict[str, Any] = {
+        "variety": "NORMAL",
+        "tradingsymbol": trading_symbol,
+        "symboltoken": symbol_token,
+        "transactiontype": transaction_type,
+        "exchange": exchange,
+        "ordertype": order_type,
+        "producttype": product_type,
+        "duration": "DAY",
+        "quantity": int(quantity),
+    }
+    if order_type == "LIMIT":
+        payload["price"] = float(price or 0)
+
+    headers = _headers(api_key)
+    headers["Authorization"] = f"Bearer {jwt_token}"
+
+    try:
+        with httpx.Client(timeout=settings.angel_http_timeout_seconds) as client:
+            resp = client.post(url, json=payload, headers=headers)
+    except httpx.HTTPError as exc:
+        raise AngelOrderError("Angel order transport error") from exc
+
+    if resp.status_code != 200:
+        raise AngelOrderError(f"Angel order failed ({resp.status_code})")
+
+    data: dict[str, Any] = resp.json()
+    if data.get("status") is not True:
+        msg = str(data.get("message") or "Angel order failed")
+        raise AngelOrderError(msg)
+
+    inner = data.get("data") or {}
+    order_id = (
+        inner.get("orderid") or inner.get("orderId") or inner.get("uniqueorderid")
+    )
+    if not order_id:
+        raise AngelOrderError("Angel order response missing order id")
+    return str(order_id)

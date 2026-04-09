@@ -3,7 +3,7 @@ import { CircleCheck, CircleX, Loader2, RefreshCw } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { health } from '@/lib/api/health'
+import { readiness } from '@/lib/api/health'
 import { useAuthStore } from '@/store/authStore'
 
 function Dot({ ok }: { ok: boolean }) {
@@ -24,13 +24,14 @@ export function StatusBar() {
   const isRefreshing = useAuthStore((s) => s.isRefreshing)
 
   const api = useQuery({
-    queryKey: ['health'],
-    queryFn: health,
+    queryKey: ['health', 'ready'],
+    queryFn: readiness,
     refetchInterval: 30_000,
     retry: false,
   })
 
-  const apiOk = api.data?.status === 'ok'
+  const apiOk = api.data?.status === 'ready'
+  const schemaOk = api.data?.schema?.ok ?? false
 
   return (
     <div className="border-t bg-background px-3">
@@ -40,11 +41,11 @@ export function StatusBar() {
             {api.isLoading ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
             ) : (
-              <Dot ok={apiOk} />
+              <Dot ok={apiOk && schemaOk} />
             )}
             API
             <span className="text-muted-foreground">
-              {api.isLoading ? 'Checking' : apiOk ? 'Healthy' : 'Degraded'}
+              {api.isLoading ? 'Checking' : apiOk && schemaOk ? 'Ready' : 'Not ready'}
             </span>
           </Badge>
           <Badge variant="outline" className="inline-flex items-center gap-2">

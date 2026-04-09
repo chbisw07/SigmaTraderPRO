@@ -19,6 +19,15 @@ beforeAll(() => {
       return jsonResponse({ status: 'ok' })
     }
 
+    if (path === '/health/ready') {
+      return jsonResponse({
+        status: 'ready',
+        postgres: { ok: true, error: null },
+        redis: { ok: true, error: null },
+        schema: { ok: true, error: null },
+      })
+    }
+
     if (path === '/api/v1/auth/me') {
       return jsonResponse({
         id: 1,
@@ -216,6 +225,79 @@ beforeAll(() => {
             updated_at: '2026-04-09T00:00:00Z',
           },
         ],
+      })
+    }
+
+    if (path === '/api/v1/orders/preview') {
+      return jsonResponse({
+        instrument: {
+          canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+          exchange: 'NSE_EQ',
+          segment: 'EQUITY',
+          instrument_type: 'EQUITY',
+          symbol_root: 'INFY',
+          display_symbol: 'INFY',
+          underlying: null,
+          expiry: null,
+          strike: null,
+          option_type: null,
+          lot_size: 1,
+          tick_size: 0.05,
+          isin: 'INE009A01021',
+          is_active: true,
+          created_at: '2026-04-09T00:00:00Z',
+          updated_at: '2026-04-09T00:00:00Z',
+        },
+        routing: {
+          broker: 'angel',
+          exchange: 'NSE',
+          trading_symbol: 'INFY-EQ',
+        },
+        side: 'BUY',
+        quantity: 1,
+        product: 'CNC',
+        order_type: 'MARKET',
+        limit_price: null,
+        warnings: [],
+      })
+    }
+
+    if (path === '/api/v1/orders') {
+      return jsonResponse({
+        order_id: 1,
+        status: 'submitted',
+        broker_order_id: 'BROKER_ORDER_1',
+        preview: {
+          instrument: {
+            canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+            exchange: 'NSE_EQ',
+            segment: 'EQUITY',
+            instrument_type: 'EQUITY',
+            symbol_root: 'INFY',
+            display_symbol: 'INFY',
+            underlying: null,
+            expiry: null,
+            strike: null,
+            option_type: null,
+            lot_size: 1,
+            tick_size: 0.05,
+            isin: 'INE009A01021',
+            is_active: true,
+            created_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+          },
+          routing: {
+            broker: 'angel',
+            exchange: 'NSE',
+            trading_symbol: 'INFY-EQ',
+          },
+          side: 'BUY',
+          quantity: 1,
+          product: 'CNC',
+          order_type: 'MARKET',
+          limit_price: null,
+          warnings: [],
+        },
       })
     }
 

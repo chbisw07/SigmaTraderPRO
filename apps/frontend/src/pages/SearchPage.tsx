@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import * as instrumentsApi from '@/lib/api/instruments'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
+import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 
 function useDebounced(value: string, delayMs = 250) {
   const [debounced, setDebounced] = useState(value)
@@ -69,6 +70,8 @@ export function SearchPage() {
   const [syncBusy, setSyncBusy] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const [syncUnderlyings, setSyncUnderlyings] = useState('NIFTY,BANKNIFTY')
+  const [stockDialogOpen, setStockDialogOpen] = useState(false)
+  const [selectedStock, setSelectedStock] = useState<instrumentsApi.InstrumentOut | null>(null)
 
   const [q, setQ] = useState('')
   const [filterType, setFilterType] = useState<
@@ -349,6 +352,7 @@ export function SearchPage() {
             <div className="divide-y rounded-lg border bg-card">
               {results.map((i) => {
                 const suffix = formatDerivativeSuffix(i)
+                const canTrade = i.segment === 'EQUITY' && (i.instrument_type === 'EQUITY' || i.instrument_type === 'ETF')
                 return (
                   <div key={i.canonical_id} className="flex flex-wrap items-center justify-between gap-3 p-3">
                     <div className="min-w-0">
@@ -367,6 +371,19 @@ export function SearchPage() {
                         {i.canonical_id}
                       </div>
                     </div>
+                    {canTrade ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedStock(i)
+                          setStockDialogOpen(true)
+                        }}
+                      >
+                        Trade
+                      </Button>
+                    ) : null}
                   </div>
                 )
               })}
@@ -538,6 +555,14 @@ export function SearchPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {selectedStock ? (
+        <StockOrderDialog
+          open={stockDialogOpen}
+          onOpenChange={setStockDialogOpen}
+          instrument={selectedStock}
+        />
+      ) : null}
     </div>
   )
 }

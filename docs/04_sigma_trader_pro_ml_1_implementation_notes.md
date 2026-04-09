@@ -258,3 +258,16 @@ This document is the **single milestone-level implementation memory artifact** f
 
 ### Notes / Deviations
 - Broker symbols/tokens are stored only as internal mapping data; search responses are canonical-first by design.
+
+## 2026-04-09 — Sprint 4 / S4.1 — Stock order dialog (cash)
+### Implemented
+- Stock ticket UI launched from canonical Search results (cash instruments only)
+- Preview-first order API:
+  - `POST /api/v1/orders/preview`
+  - `POST /api/v1/orders`
+- Canonical → broker routing resolution behind the broker adapter boundary
+- Angel + Zerodha cash order placement implemented in adapters (`place_equity_order`)
+- Minimal order persistence via new `orders` table + Alembic migration `0005_create_orders`
+
+### Notes / Deviations
+- This milestone intentionally excludes SL/TP/TSL protective controls; they will be layered on with a shared ticket core in later milestones.

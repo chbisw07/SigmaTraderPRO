@@ -56,7 +56,7 @@ backend-install: backend-venv
 	cd $(BACKEND_DIR) && . .venv/bin/activate && python -m pip install -U pip && pip install -r requirements.txt -r requirements-dev.txt
 
 backend-run:
-	cd $(BACKEND_DIR) && . .venv/bin/activate && uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+	cd $(BACKEND_DIR) && . .venv/bin/activate && alembic -c alembic.ini upgrade head && uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 backend-lint:
 	cd $(BACKEND_DIR) && . .venv/bin/activate && ruff check . && ruff format --check .

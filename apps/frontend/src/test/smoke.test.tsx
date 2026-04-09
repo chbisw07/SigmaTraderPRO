@@ -183,6 +183,38 @@ test('search page renders and returns canonical results', async () => {
   expect(screen.getByText('NSE_EQ:EQUITY:EQUITY:INFY')).toBeInTheDocument()
 })
 
+test('stock order dialog opens from search and previews order', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: 'angel',
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/search')
+
+  expect(await screen.findByRole('heading', { name: 'Search' })).toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText('Instrument search query'), {
+    target: { value: 'INFY' },
+  })
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Trade' }))
+
+  expect(await screen.findByText('Stock order')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+  expect(await screen.findByText('Ready')).toBeInTheDocument()
+})
+
 test('strike discovery renders option chain for selected underlying', async () => {
   useAuthStore.setState({
     status: 'authenticated',

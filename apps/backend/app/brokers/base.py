@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.brokers.types import BrokerKey, BrokerStatus
 from app.models.user import User
+from app.orders.types import EquityOrderRequest, EquityOrderResult
 
 
 class BrokerError(RuntimeError):
@@ -40,4 +41,10 @@ class BrokerAdapter(ABC):
 
     @abstractmethod
     def disconnect(self, db: Session, user: User) -> BrokerStatus:
+        raise NotImplementedError
+
+    @abstractmethod
+    def place_equity_order(
+        self, db: Session, user: User, *, request: EquityOrderRequest
+    ) -> EquityOrderResult:
         raise NotImplementedError

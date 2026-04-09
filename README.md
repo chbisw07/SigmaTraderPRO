@@ -33,6 +33,8 @@ make backend-run
 Backend URL:
 - `http://127.0.0.1:8000`
 
+`make backend-run` auto-applies Alembic migrations (`upgrade head`) before starting uvicorn.
+
 Runtime output (local, ignored by git):
 - backend logs: `apps/backend/.logs`
 - backend CSV audit: `apps/backend/.audit`
@@ -63,6 +65,11 @@ Instrument endpoints (backend; UI wiring later):
 - `GET /api/v1/instruments/derivatives/expiries?underlying=...`
 - `GET /api/v1/instruments/derivatives/strikes?underlying=...&expiry=YYYY-MM-DD`
 - `GET /api/v1/instruments/derivatives/options?underlying=...&expiry=YYYY-MM-DD&option_type=CE|PE`
+- `POST /api/v1/instruments/sync/angel-master` (bootstrap sync; dev-only usage)
+
+Orders (backend; S4.1 cash instruments only):
+- `POST /api/v1/orders/preview`
+- `POST /api/v1/orders`
 
 ### Frontend (Vite)
 From repo root:
@@ -84,6 +91,9 @@ Frontend env:
 Auth (local/dev):
 - Create a dev user (backend): `POST /api/v1/auth/register`
 - Sign in (frontend): `http://localhost:5173/login`
+
+Stock ticket (S4.1):
+- Go to `Search` → run “Sync equities” once → search a stock → click `Trade` → `Preview` → `Place buy/sell`.
 
 ## Quality gates
 
