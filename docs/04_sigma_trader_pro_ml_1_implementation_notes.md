@@ -79,3 +79,40 @@ This document is the **single milestone-level implementation memory artifact** f
 
 ### Follow-up TODOs
 - Introduce request correlation IDs and propagate into structured logs + CSV audit entries.
+
+## 2026-04-09 — Sprint 2 / S2.1 — Auth backend + schema
+### Implemented
+- `users` table schema + Alembic migration (`last_used_broker` preference included)
+- JWT access + refresh token issuance (`/api/v1/auth/login`, `/api/v1/auth/refresh`)
+- Minimal registration endpoint (`/api/v1/auth/register`) for local/dev bootstrap
+- Protected identity endpoint (`/api/v1/auth/me`) and minimal preferences update endpoint
+- Password hashing via Passlib (bcrypt) and token validation dependency for future protected routes
+
+### Files / Modules
+- `apps/backend/app/models/user.py`
+- `apps/backend/app/core/security.py`
+- `apps/backend/app/api/deps.py`
+- `apps/backend/app/api/v1/auth.py`
+- `apps/backend/app/api/v1/router.py`
+- `apps/backend/app/schemas/auth.py`
+- `apps/backend/app/schemas/user.py`
+- `apps/backend/app/services/auth_service.py`
+- `apps/backend/alembic/versions/0002_create_users.py`
+- `apps/backend/tests/test_auth_flow.py`
+- `apps/backend/tests/test_migrations.py`
+
+### API / DB / UI Changes
+- API: added `/api/v1/auth/*` endpoints
+- DB: added `users` table
+- UI: none (frontend auth is explicitly deferred)
+
+### Tests / Quality Gates
+- ruff: `make backend-lint`
+- tests: `make backend-test`
+- smoke checks: `make check`
+
+### Notes / Deviations
+- Refresh tokens are stateless in S2.1 (no revocation/blacklist store yet).
+
+### Follow-up TODOs
+- Add refresh token persistence / revocation only if/when required by product/security posture.

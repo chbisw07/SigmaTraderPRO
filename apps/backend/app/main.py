@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.health import router as health_router
+from app.api.v1.router import api_router as v1_router
 from app.core.config import settings
 from app.core.csv_audit import CsvAuditConfig, CsvAuditLogger
 from app.core.diagnostics import startup_diagnostics
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
     app.include_router(health_router)
+    app.include_router(v1_router)
     return app
 
 

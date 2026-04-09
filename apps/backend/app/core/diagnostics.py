@@ -25,6 +25,14 @@ def startup_diagnostics(settings: Settings) -> dict[str, Any]:
             "host": settings.app_host,
             "port": settings.app_port,
         },
+        "auth": {
+            "jwt_secret_configured": bool(settings.jwt_secret_key)
+            and settings.jwt_secret_key
+            != "dev-insecure-change-me-please-use-32-bytes-min",
+            "jwt_algorithm": settings.jwt_algorithm,
+            "access_token_expire_minutes": settings.access_token_expire_minutes,
+            "refresh_token_expire_minutes": settings.refresh_token_expire_minutes,
+        },
         "persistence": {
             "postgres_configured": bool(settings.database_url),
             "redis_configured": bool(settings.redis_url),

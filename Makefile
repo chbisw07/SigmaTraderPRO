@@ -14,6 +14,7 @@ help:
 	@echo "  make backend-lint    Ruff lint + format check"
 	@echo "  make backend-fmt     Ruff format"
 	@echo "  make backend-test    Pytest"
+	@echo "  make backend-migrate Alembic upgrade head"
 	@echo ""
 	@echo "Frontend:"
 	@echo "  make frontend-install Install frontend deps"
@@ -47,6 +48,7 @@ infra-ps:
 	docker compose -f $(COMPOSE_FILE) ps
 
 .PHONY: backend-venv backend-install backend-run backend-lint backend-fmt backend-test
+.PHONY: backend-migrate
 backend-venv:
 	cd $(BACKEND_DIR) && [ -d .venv ] || python3 -m venv .venv
 
@@ -64,6 +66,9 @@ backend-fmt:
 
 backend-test:
 	cd $(BACKEND_DIR) && . .venv/bin/activate && pytest
+
+backend-migrate:
+	cd $(BACKEND_DIR) && . .venv/bin/activate && alembic -c alembic.ini upgrade head
 
 .PHONY: frontend-install frontend-dev frontend-lint frontend-test frontend-build
 frontend-install:

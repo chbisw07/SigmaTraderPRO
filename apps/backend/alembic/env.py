@@ -4,6 +4,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
+import app.models.user  # noqa: F401
 from alembic import context
 from app.core.config import settings
 from app.models.base import Base
@@ -17,6 +18,9 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
+    url = config.get_main_option("sqlalchemy.url")
+    if url and not url.startswith("driver://"):
+        return url
     return settings.database_url
 
 

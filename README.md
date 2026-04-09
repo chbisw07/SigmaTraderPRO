@@ -37,6 +37,12 @@ Runtime output (local, ignored by git):
 - backend logs: `apps/backend/.logs`
 - backend CSV audit: `apps/backend/.audit`
 
+Auth endpoints (backend only; frontend wiring is later):
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `GET /api/v1/auth/me`
+
 ### Frontend (Vite)
 From repo root:
 

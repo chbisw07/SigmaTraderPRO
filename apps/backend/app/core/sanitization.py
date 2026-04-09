@@ -5,19 +5,29 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-SENSITIVE_KEYS = (
+SENSITIVE_KEY_EXACT = {
     "password",
     "token",
     "secret",
     "api_key",
     "refresh_token",
     "access_token",
+}
+
+SENSITIVE_KEY_SUFFIXES = (
+    "_password",
+    "_token",
+    "_secret",
+    "_secret_key",
+    "_api_key",
 )
 
 
 def is_sensitive_key(key: str) -> bool:
     lowered = key.lower()
-    return any(part in lowered for part in SENSITIVE_KEYS)
+    if lowered in SENSITIVE_KEY_EXACT:
+        return True
+    return any(lowered.endswith(suffix) for suffix in SENSITIVE_KEY_SUFFIXES)
 
 
 def redact_value(value: Any) -> str:

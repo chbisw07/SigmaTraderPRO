@@ -31,6 +31,18 @@ class Settings(BaseSettings):
         default=10 * 1024 * 1024, validation_alias="AUDIT_CSV_MAX_BYTES"
     )
 
+    jwt_secret_key: str = Field(
+        default="dev-insecure-change-me-please-use-32-bytes-min",
+        validation_alias="JWT_SECRET_KEY",
+    )
+    jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
+    access_token_expire_minutes: int = Field(
+        default=15, validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES"
+    )
+    refresh_token_expire_minutes: int = Field(
+        default=60 * 24 * 7, validation_alias="REFRESH_TOKEN_EXPIRE_MINUTES"
+    )
+
     database_url: str = Field(
         default="postgresql+psycopg://sigmatrader:sigmatrader@127.0.0.1:5432/sigmatraderpro",
         validation_alias="DATABASE_URL",
