@@ -4,6 +4,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
+import app.models.broker_connection  # noqa: F401
 import app.models.user  # noqa: F401
 from alembic import context
 from app.core.config import settings

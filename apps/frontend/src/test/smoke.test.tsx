@@ -130,3 +130,27 @@ test('logout clears auth state and redirects to login', async () => {
   // persisted auth artifacts should be gone after logout
   expect(localStorage.getItem('sigmatraderpro.auth')).toBeNull()
 })
+
+test('brokers page renders broker cards', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: null,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/brokers')
+
+  expect(await screen.findByRole('heading', { name: 'Brokers' })).toBeInTheDocument()
+  expect(screen.getByText('Angel One (SmartAPI)')).toBeInTheDocument()
+  expect(screen.getByText('Zerodha (Kite Connect)')).toBeInTheDocument()
+  expect(screen.getByText('Fyers (coming soon)')).toBeInTheDocument()
+})

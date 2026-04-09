@@ -52,6 +52,24 @@ class Settings(BaseSettings):
         validation_alias="REDIS_URL",
     )
 
+    broker_encryption_key: str = Field(
+        default="dev-broker-encryption-key-change-me",
+        validation_alias="BROKER_ENCRYPTION_KEY",
+    )
+
+    angel_http_timeout_seconds: float = Field(
+        default=10.0, validation_alias="ANGEL_HTTP_TIMEOUT_SECONDS"
+    )
+    angel_client_local_ip: str = Field(
+        default="127.0.0.1", validation_alias="ANGEL_CLIENT_LOCAL_IP"
+    )
+    angel_client_public_ip: str = Field(
+        default="127.0.0.1", validation_alias="ANGEL_CLIENT_PUBLIC_IP"
+    )
+    angel_mac_address: str = Field(
+        default="00:00:00:00:00:00", validation_alias="ANGEL_MAC_ADDRESS"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

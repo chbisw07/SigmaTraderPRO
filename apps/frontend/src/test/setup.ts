@@ -54,6 +54,37 @@ beforeAll(() => {
       })
     }
 
+    if (url.endsWith('/api/v1/brokers/status')) {
+      return jsonResponse([
+        {
+          broker: 'angel',
+          configured: true,
+          enabled: true,
+          state: 'connected',
+          connected: true,
+          stale: false,
+          session_day: '2026-04-09',
+          last_connected_at: '2026-04-09T09:00:00Z',
+          last_error: null,
+        },
+        {
+          broker: 'zerodha',
+          configured: false,
+          enabled: false,
+          state: 'not_configured',
+          connected: false,
+          stale: false,
+          session_day: null,
+          last_connected_at: null,
+          last_error: null,
+        },
+      ])
+    }
+
+    if (url.endsWith('/api/v1/brokers/zerodha/login-url')) {
+      return jsonResponse({ url: 'https://kite.zerodha.com/connect/login?api_key=K' })
+    }
+
     return jsonResponse({ detail: 'Not found' }, 404)
   })
 })

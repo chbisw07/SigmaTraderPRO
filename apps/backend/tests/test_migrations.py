@@ -22,4 +22,5 @@ def test_alembic_upgrade_head_sqlite(tmp_path: Path) -> None:
     engine = create_engine(url, future=True)
     insp = inspect(engine)
     assert "users" in insp.get_table_names()
+    assert "broker_connections" in insp.get_table_names()
     engine.dispose()

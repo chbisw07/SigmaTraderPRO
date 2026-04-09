@@ -151,3 +151,73 @@ This document is the **single milestone-level implementation memory artifact** f
 
 ### Follow-up TODOs
 - Add a small “refresh-on-401” retry helper once protected API slices (brokers/orders/etc.) begin.
+
+## 2026-04-09 — Sprint 3 / S3.1 — Broker adapter interface + Angel auth
+### Implemented
+- Broker-agnostic adapter contract (`BrokerAdapter`) + stable broker status model/state semantics
+- Persisted per-user broker connection state in `broker_connections` (credentials + session tokens stored encrypted)
+- Angel One adapter implementing settings, connect/reconnect, disconnect, and status behind the adapter boundary
+- Daily-session validity model: sessions are valid “for today”; status flips to `stale` the next day
+- Versioned broker endpoints under `/api/v1/brokers/...` (auth-required)
+
+### Files / Modules
+- `apps/backend/app/brokers/base.py`
+- `apps/backend/app/brokers/types.py`
+- `apps/backend/app/brokers/angel_client.py`
+- `apps/backend/app/brokers/angel_adapter.py`
+- `apps/backend/app/models/broker_connection.py`
+- `apps/backend/app/services/broker_service.py`
+- `apps/backend/app/api/v1/brokers.py`
+- `apps/backend/app/schemas/broker.py`
+- `apps/backend/alembic/versions/0003_create_broker_connections.py`
+- `apps/backend/tests/test_broker_angel.py`
+
+### API / DB / UI Changes
+- API: added `/api/v1/brokers/status` and Angel endpoints under `/api/v1/brokers/angel/...`
+- DB: added `broker_connections` table
+- UI: none (broker UI deferred)
+
+### Tests / Quality Gates
+- ruff: `make backend-lint`
+- tests: `make backend-test`
+- smoke checks: `make check`
+
+### Notes / Deviations
+- External Angel auth calls are isolated behind a small HTTP client; tests mock the connect boundary (no live broker dependency).
+- Secrets are never logged; storage uses `BROKER_ENCRYPTION_KEY` for encryption-at-rest baseline.
+
+### Follow-up TODOs
+- Add callback/postback URL fields where required by specific brokers (Zerodha/Fyers) and surface in broker settings UI.
+
+## 2026-04-09 — Sprint 3 / S3.x — Broker settings/login UI foundation (Zerodha + Angel)
+### Implemented
+- Added Zerodha adapter (Kite Connect request_token flow) under the broker adapter boundary
+- Added authenticated Zerodha broker endpoints (`/api/v1/brokers/zerodha/...`) including `login-url`
+- Implemented Brokers page UI for Angel + Zerodha settings and connect/reconnect actions (Fyers placeholder only)
+
+### Files / Modules
+- `apps/backend/app/brokers/zerodha_client.py`
+- `apps/backend/app/brokers/zerodha_adapter.py`
+- `apps/backend/app/schemas/broker.py`
+- `apps/backend/app/api/v1/brokers.py`
+- `apps/backend/app/services/broker_service.py`
+- `apps/backend/tests/test_broker_zerodha.py`
+- `apps/frontend/src/lib/api/brokers.ts`
+- `apps/frontend/src/pages/BrokersPage.tsx`
+- `apps/frontend/src/components/ui/input.tsx`
+- `apps/frontend/src/components/ui/card.tsx`
+- `apps/frontend/src/test/setup.ts`
+- `apps/frontend/src/test/smoke.test.tsx`
+
+### API / DB / UI Changes
+- API: added Zerodha connect/settings/status endpoints and a `login-url` helper
+- DB: reused `broker_connections` table (no new migration required)
+- UI: Brokers page now supports real broker config + connect flows (no trading actions yet)
+
+### Tests / Quality Gates
+- ruff: `make backend-lint`
+- tests: `make backend-test`, `make frontend-test`
+- smoke checks: `make check`
+
+### Notes / Deviations
+- Zerodha connect uses request_token pasted from redirect URL (callback capture is intentionally deferred).

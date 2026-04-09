@@ -4,6 +4,7 @@ sqlalchemy
 alembic
 psycopg[binary]
 redis
+httpx
 pydantic
 pydantic-settings
 python-dotenv
@@ -11,3 +12,6 @@ PyJWT
 passlib[bcrypt]
 bcrypt<5
 email-validator
+cryptography
+pyotp
+kiteconnect

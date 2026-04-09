@@ -43,6 +43,20 @@ Auth endpoints (backend; frontend consumes in S2.2):
 - `POST /api/v1/auth/refresh`
 - `GET /api/v1/auth/me`
 
+Broker endpoints (backend; UI wiring later):
+- `GET /api/v1/brokers/status`
+- `GET /api/v1/brokers/angel/status`
+- `PUT /api/v1/brokers/angel/settings`
+- `POST /api/v1/brokers/angel/connect`
+- `POST /api/v1/brokers/angel/reconnect`
+- `POST /api/v1/brokers/angel/disconnect`
+- `GET /api/v1/brokers/zerodha/status`
+- `PUT /api/v1/brokers/zerodha/settings`
+- `GET /api/v1/brokers/zerodha/login-url`
+- `POST /api/v1/brokers/zerodha/connect`
+- `POST /api/v1/brokers/zerodha/reconnect`
+- `POST /api/v1/brokers/zerodha/disconnect`
+
 ### Frontend (Vite)
 From repo root:
 
