@@ -34,6 +34,7 @@ type AuthState = {
   bootstrap: () => Promise<void>
   login: (email: string, password: string) => Promise<void>
   logout: () => void
+  updateLastUsedBroker: (broker: string | null) => Promise<void>
 }
 
 type PersistedAuthState = Pick<AuthState, 'accessToken' | 'refreshToken' | 'user'>
@@ -144,6 +145,20 @@ export const useAuthStore = create<AuthState>()(
           isRefreshing: false,
           revision: nextRevision,
         })
+      },
+
+      updateLastUsedBroker: async (broker: string | null) => {
+        const accessToken = get().accessToken
+        if (!accessToken || get().status !== 'authenticated') return
+
+        try {
+          const user = await authApi.updatePreferences(accessToken, {
+            last_used_broker: broker,
+          })
+          set({ user })
+        } catch {
+          // ignore; preference is optional for search UX
+        }
       },
     }),
     {

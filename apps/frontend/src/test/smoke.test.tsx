@@ -154,3 +154,67 @@ test('brokers page renders broker cards', async () => {
   expect(screen.getByText('Zerodha (Kite Connect)')).toBeInTheDocument()
   expect(screen.getByText('Fyers (coming soon)')).toBeInTheDocument()
 })
+
+test('search page renders and returns canonical results', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: null,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/search')
+
+  expect(await screen.findByRole('heading', { name: 'Search' })).toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText('Instrument search query'), {
+    target: { value: 'INFY' },
+  })
+
+  expect(await screen.findByText('INFY')).toBeInTheDocument()
+  expect(screen.getByText('NSE_EQ:EQUITY:EQUITY:INFY')).toBeInTheDocument()
+})
+
+test('strike discovery renders option chain for selected underlying', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: null,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/search')
+
+  expect(await screen.findByRole('heading', { name: 'Search' })).toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText('Underlying search query'), {
+    target: { value: 'NIFTY' },
+  })
+
+  fireEvent.click(await screen.findByRole('button', { name: /NIFTY/i }))
+
+  await screen.findByRole('option', { name: '2026-04-25' })
+
+  fireEvent.change(screen.getByLabelText('Expiry select'), {
+    target: { value: '2026-04-25' },
+  })
+
+  expect(await screen.findByText(/contracts/i)).toBeInTheDocument()
+  expect(await screen.findByText('23100')).toBeInTheDocument()
+})

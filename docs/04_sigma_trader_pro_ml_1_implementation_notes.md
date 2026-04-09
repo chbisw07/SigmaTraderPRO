@@ -221,3 +221,40 @@ This document is the **single milestone-level implementation memory artifact** f
 
 ### Notes / Deviations
 - Zerodha connect uses request_token pasted from redirect URL (callback capture is intentionally deferred).
+
+## 2026-04-09 — Sprint 3 / S3.2 — Canonical instrument registry backend
+### Implemented
+- Canonical enums introduced per frozen PRD: Exchange/Segment/InstrumentType/OptionType
+- Canonical registry persistence added:
+  - `instruments` table with stable `canonical_id`
+  - `instrument_mappings` table storing broker resolution data (internal-only)
+- Angel instrument normalization + idempotent ingest (repeat imports converge; no duplicate canonicals)
+- Sync/import skeleton (`InstrumentSyncService.sync_angel_rows`) plus a small CLI helper
+- Canonical-first search API (`/api/v1/instruments/search`, `/api/v1/instruments/{canonical_id}`) returning canonical objects only
+
+### Files / Modules
+- `apps/backend/app/instruments/types.py`
+- `apps/backend/app/models/instrument.py`
+- `apps/backend/app/models/instrument_mapping.py`
+- `apps/backend/app/services/instrument_normalizer.py`
+- `apps/backend/app/services/instrument_registry_service.py`
+- `apps/backend/app/services/instrument_sync_service.py`
+- `apps/backend/app/api/v1/instruments.py`
+- `apps/backend/app/schemas/instrument.py`
+- `apps/backend/alembic/versions/0004_create_instrument_registry.py`
+- `apps/backend/tests/test_instruments_registry.py`
+- `apps/backend/scripts/sync_angel_instruments.py`
+
+### API / DB / UI Changes
+- API: added `/api/v1/instruments/search` and `/api/v1/instruments/{canonical_id}` (auth-required)
+- DB: added `instruments` + `instrument_mappings` tables
+- UI: none (backend-first milestone)
+
+### Tests / Quality Gates
+- ruff: `make backend-lint`
+- tests: `make backend-test`
+- migration: `make backend-migrate`
+- repo gates: `make check`
+
+### Notes / Deviations
+- Broker symbols/tokens are stored only as internal mapping data; search responses are canonical-first by design.

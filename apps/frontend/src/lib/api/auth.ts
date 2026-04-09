@@ -35,3 +35,13 @@ export async function me(accessToken: string): Promise<UserOut> {
   })
 }
 
+export async function updatePreferences(
+  accessToken: string,
+  payload: { last_used_broker: string | null },
+): Promise<UserOut> {
+  return apiRequest<UserOut>('/api/v1/auth/me/preferences', {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify(payload),
+  })
+}

@@ -57,6 +57,13 @@ Broker endpoints (backend; UI wiring later):
 - `POST /api/v1/brokers/zerodha/reconnect`
 - `POST /api/v1/brokers/zerodha/disconnect`
 
+Instrument endpoints (backend; UI wiring later):
+- `GET /api/v1/instruments/search?q=...`
+- `GET /api/v1/instruments/{canonical_id}`
+- `GET /api/v1/instruments/derivatives/expiries?underlying=...`
+- `GET /api/v1/instruments/derivatives/strikes?underlying=...&expiry=YYYY-MM-DD`
+- `GET /api/v1/instruments/derivatives/options?underlying=...&expiry=YYYY-MM-DD&option_type=CE|PE`
+
 ### Frontend (Vite)
 From repo root:
 

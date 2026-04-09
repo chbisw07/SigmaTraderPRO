@@ -6,6 +6,7 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { OrdersPage } from '@/pages/OrdersPage'
 import { PositionsPage } from '@/pages/PositionsPage'
+import { SearchPage } from '@/pages/SearchPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StrategiesPage } from '@/pages/StrategiesPage'
 import { RequireAuth } from '@/routes/RequireAuth'
@@ -25,6 +26,7 @@ export const routeConfig: RouteObject[] = [
         children: [
           { index: true, element: <DashboardPage /> },
           { path: 'brokers', element: <BrokersPage /> },
+          { path: 'search', element: <SearchPage /> },
           { path: 'strategies', element: <StrategiesPage /> },
           { path: 'positions', element: <PositionsPage /> },
           { path: 'orders', element: <OrdersPage /> },

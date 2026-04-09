@@ -10,14 +10,16 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 beforeAll(() => {
-  vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
-    const url = typeof input === 'string' ? input : input.toString()
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const raw = typeof input === 'string' ? input : input.toString()
+    const url = raw.startsWith('http') ? new URL(raw) : new URL(raw, 'http://localhost')
+    const path = url.pathname
 
-    if (url.endsWith('/health')) {
+    if (path === '/health') {
       return jsonResponse({ status: 'ok' })
     }
 
-    if (url.endsWith('/api/v1/auth/me')) {
+    if (path === '/api/v1/auth/me') {
       return jsonResponse({
         id: 1,
         email: 'dev@example.com',
@@ -26,7 +28,26 @@ beforeAll(() => {
       })
     }
 
-    if (url.endsWith('/api/v1/auth/login')) {
+    if (path === '/api/v1/auth/me/preferences') {
+      let lastUsedBroker: string | null = null
+      try {
+        const body = typeof init?.body === 'string' ? init.body : null
+        if (body) {
+          const parsed = JSON.parse(body) as { last_used_broker?: string | null }
+          lastUsedBroker = parsed.last_used_broker ?? null
+        }
+      } catch {
+        // ignore
+      }
+      return jsonResponse({
+        id: 1,
+        email: 'dev@example.com',
+        is_active: true,
+        last_used_broker: lastUsedBroker,
+      })
+    }
+
+    if (path === '/api/v1/auth/login') {
       return jsonResponse({
         token_type: 'bearer',
         access_token: 'ACCESS_TOKEN_TEST',
@@ -40,7 +61,7 @@ beforeAll(() => {
       })
     }
 
-    if (url.endsWith('/api/v1/auth/refresh')) {
+    if (path === '/api/v1/auth/refresh') {
       return jsonResponse({
         token_type: 'bearer',
         access_token: 'ACCESS_TOKEN_REFRESHED_TEST',
@@ -54,7 +75,7 @@ beforeAll(() => {
       })
     }
 
-    if (url.endsWith('/api/v1/brokers/status')) {
+    if (path === '/api/v1/brokers/status') {
       return jsonResponse([
         {
           broker: 'angel',
@@ -81,8 +102,121 @@ beforeAll(() => {
       ])
     }
 
-    if (url.endsWith('/api/v1/brokers/zerodha/login-url')) {
+    if (path === '/api/v1/brokers/zerodha/login-url') {
       return jsonResponse({ url: 'https://kite.zerodha.com/connect/login?api_key=K' })
+    }
+
+    if (path === '/api/v1/instruments/search') {
+      const q = (url.searchParams.get('q') ?? '').toLowerCase()
+      if (!q) return jsonResponse({ items: [] })
+
+      if (q.includes('infy')) {
+        return jsonResponse({
+          items: [
+            {
+              canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+              exchange: 'NSE_EQ',
+              segment: 'EQUITY',
+              instrument_type: 'EQUITY',
+              symbol_root: 'INFY',
+              display_symbol: 'INFY',
+              underlying: null,
+              expiry: null,
+              strike: null,
+              option_type: null,
+              lot_size: 1,
+              tick_size: 0.05,
+              isin: 'INE009A01021',
+              is_active: true,
+              created_at: '2026-04-09T00:00:00Z',
+              updated_at: '2026-04-09T00:00:00Z',
+            },
+          ],
+        })
+      }
+
+      if (q.includes('nifty')) {
+        return jsonResponse({
+          items: [
+            {
+              canonical_id: 'NSE_FNO:INDEX:INDEX:NIFTY',
+              exchange: 'NSE_FNO',
+              segment: 'INDEX',
+              instrument_type: 'INDEX',
+              symbol_root: 'NIFTY',
+              display_symbol: 'NIFTY',
+              underlying: null,
+              expiry: null,
+              strike: null,
+              option_type: null,
+              lot_size: 50,
+              tick_size: 0.05,
+              isin: null,
+              is_active: true,
+              created_at: '2026-04-09T00:00:00Z',
+              updated_at: '2026-04-09T00:00:00Z',
+            },
+          ],
+        })
+      }
+
+      return jsonResponse({ items: [] })
+    }
+
+    if (path === '/api/v1/instruments/derivatives/expiries') {
+      return jsonResponse({
+        underlying: url.searchParams.get('underlying') ?? 'NIFTY',
+        exchange: url.searchParams.get('exchange') ?? 'NSE_FNO',
+        instrument_type: url.searchParams.get('instrument_type') ?? 'OPTION',
+        expiries: ['2026-04-25'],
+      })
+    }
+
+    if (path === '/api/v1/instruments/derivatives/options') {
+      const underlying = (url.searchParams.get('underlying') ?? '').toUpperCase()
+      const expiry = url.searchParams.get('expiry') ?? '2026-04-25'
+      const optionType = url.searchParams.get('option_type') ?? 'CE'
+      if (!underlying) return jsonResponse({ items: [] })
+      return jsonResponse({
+        items: [
+          {
+            canonical_id: `NSE_FNO:OPTION:OPTION:${underlying}:${expiry}:23100:${optionType}`,
+            exchange: 'NSE_FNO',
+            segment: 'OPTION',
+            instrument_type: 'OPTION',
+            symbol_root: `${underlying}${expiry}23100${optionType}`,
+            display_symbol: `${underlying}${expiry}23100${optionType}`,
+            underlying,
+            expiry,
+            strike: 23100,
+            option_type: optionType,
+            lot_size: 50,
+            tick_size: 0.05,
+            isin: null,
+            is_active: true,
+            created_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+          },
+          {
+            canonical_id: `NSE_FNO:OPTION:OPTION:${underlying}:${expiry}:23200:${optionType}`,
+            exchange: 'NSE_FNO',
+            segment: 'OPTION',
+            instrument_type: 'OPTION',
+            symbol_root: `${underlying}${expiry}23200${optionType}`,
+            display_symbol: `${underlying}${expiry}23200${optionType}`,
+            underlying,
+            expiry,
+            strike: 23200,
+            option_type: optionType,
+            lot_size: 50,
+            tick_size: 0.05,
+            isin: null,
+            is_active: true,
+            created_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+          },
+        ],
+      })
     }
 
     return jsonResponse({ detail: 'Not found' }, 404)
