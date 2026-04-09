@@ -70,6 +70,11 @@ class Settings(BaseSettings):
         default="00:00:00:00:00:00", validation_alias="ANGEL_MAC_ADDRESS"
     )
 
+    angel_instrument_master_url: str = Field(
+        default="https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json",
+        validation_alias="ANGEL_INSTRUMENT_MASTER_URL",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

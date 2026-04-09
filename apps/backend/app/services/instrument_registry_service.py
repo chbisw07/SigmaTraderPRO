@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.brokers.types import BrokerKey
@@ -37,8 +38,7 @@ class InstrumentRegistryService:
             existing.tick_size = payload.tick_size
             existing.isin = payload.isin
             existing.is_active = payload.is_active
-            db.commit()
-            db.refresh(existing)
+            db.flush()
             return existing
 
         instrument = Instrument(
@@ -58,8 +58,7 @@ class InstrumentRegistryService:
             is_active=payload.is_active,
         )
         db.add(instrument)
-        db.commit()
-        db.refresh(instrument)
+        db.flush()
         return instrument
 
     def upsert_mapping(
@@ -83,8 +82,7 @@ class InstrumentRegistryService:
             existing.broker_trading_symbol = broker_trading_symbol
             existing.raw = raw
             existing.is_active = True
-            db.commit()
-            db.refresh(existing)
+            db.flush()
             return existing
 
         mapping = InstrumentMapping(
@@ -96,8 +94,7 @@ class InstrumentRegistryService:
             is_active=True,
         )
         db.add(mapping)
-        db.commit()
-        db.refresh(mapping)
+        db.flush()
         return mapping
 
     def ingest_normalized(
@@ -140,6 +137,15 @@ class InstrumentRegistryService:
             )
         )
 
+        # Relevance ordering: prefer exact/root matches over substring collisions
+        priority = case(
+            (func.lower(Instrument.symbol_root) == term, 0),
+            (func.lower(func.coalesce(Instrument.underlying, "")) == term, 1),
+            (func.lower(Instrument.display_symbol).like(f"{term}%"), 2),
+            (func.lower(Instrument.symbol_root).like(f"{term}%"), 3),
+            else_=10,
+        )
+
         if exchange:
             qry = qry.filter(Instrument.exchange == exchange.value)
         if segment:
@@ -150,7 +156,7 @@ class InstrumentRegistryService:
             qry = qry.filter(Instrument.option_type == option_type.value)
 
         return (
-            qry.order_by(Instrument.display_symbol.asc())
+            qry.order_by(priority.asc(), Instrument.display_symbol.asc())
             .limit(max(1, min(limit, 100)))
             .all()
         )
@@ -160,6 +166,106 @@ class InstrumentRegistryService:
             db.query(Instrument)
             .filter(Instrument.canonical_id == canonical_id)
             .one_or_none()
+        )
+
+    def list_expiries(
+        self,
+        db: Session,
+        *,
+        underlying: str,
+        exchange: Exchange,
+        instrument_type: InstrumentType,
+        limit: int = 40,
+    ) -> list[date]:
+        normalized = underlying.strip().upper()
+        if not normalized:
+            return []
+
+        qry = (
+            db.query(Instrument.expiry)
+            .filter(Instrument.is_active.is_(True))
+            .filter(Instrument.exchange == exchange.value)
+            .filter(Instrument.instrument_type == instrument_type.value)
+            .filter(Instrument.underlying == normalized)
+            .filter(Instrument.expiry.isnot(None))
+            .distinct()
+            .order_by(Instrument.expiry.asc())
+            .limit(max(1, min(limit, 200)))
+        )
+        return [row[0] for row in qry.all() if row[0] is not None]
+
+    def list_strikes(
+        self,
+        db: Session,
+        *,
+        underlying: str,
+        exchange: Exchange,
+        expiry: date,
+        option_type: OptionType | None = None,
+        limit: int = 400,
+    ) -> list[float]:
+        normalized = underlying.strip().upper()
+        if not normalized:
+            return []
+
+        qry = (
+            db.query(Instrument.strike)
+            .filter(Instrument.is_active.is_(True))
+            .filter(Instrument.exchange == exchange.value)
+            .filter(Instrument.instrument_type == InstrumentType.OPTION.value)
+            .filter(Instrument.underlying == normalized)
+            .filter(Instrument.expiry == expiry)
+            .filter(Instrument.strike.isnot(None))
+        )
+        if option_type:
+            qry = qry.filter(Instrument.option_type == option_type.value)
+
+        qry = (
+            qry.distinct()
+            .order_by(Instrument.strike.asc())
+            .limit(max(1, min(limit, 2000)))
+        )
+
+        strikes: list[float] = []
+        for row in qry.all():
+            strike = row[0]
+            if strike is None:
+                continue
+            try:
+                strikes.append(float(strike))
+            except Exception:
+                continue
+        return strikes
+
+    def list_options(
+        self,
+        db: Session,
+        *,
+        underlying: str,
+        exchange: Exchange,
+        expiry: date,
+        option_type: OptionType | None = None,
+        limit: int = 400,
+    ) -> list[Instrument]:
+        normalized = underlying.strip().upper()
+        if not normalized:
+            return []
+
+        qry = (
+            db.query(Instrument)
+            .filter(Instrument.is_active.is_(True))
+            .filter(Instrument.exchange == exchange.value)
+            .filter(Instrument.instrument_type == InstrumentType.OPTION.value)
+            .filter(Instrument.underlying == normalized)
+            .filter(Instrument.expiry == expiry)
+        )
+        if option_type:
+            qry = qry.filter(Instrument.option_type == option_type.value)
+
+        return (
+            qry.order_by(Instrument.strike.asc(), Instrument.display_symbol.asc())
+            .limit(max(1, min(limit, 2000)))
+            .all()
         )
 
     def resolve_for_broker(

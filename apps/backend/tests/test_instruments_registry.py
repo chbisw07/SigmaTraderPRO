@@ -147,6 +147,50 @@ def test_sync_idempotent_and_search_api(
     assert detail.status_code == 200
     assert detail.json()["symbol_root"] == "INFY"
 
+    expiries = client.get(
+        "/api/v1/instruments/derivatives/expiries",
+        params={
+            "underlying": "NIFTY",
+            "exchange": "NSE_FNO",
+            "instrument_type": "OPTION",
+        },
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert expiries.status_code == 200
+    exp_data = expiries.json()
+    assert exp_data["underlying"] == "NIFTY"
+    assert "2026-04-25" in [str(d) for d in exp_data["expiries"]]
+
+    strikes = client.get(
+        "/api/v1/instruments/derivatives/strikes",
+        params={
+            "underlying": "NIFTY",
+            "exchange": "NSE_FNO",
+            "expiry": "2026-04-25",
+            "option_type": "CE",
+        },
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert strikes.status_code == 200
+    strike_data = strikes.json()
+    assert strike_data["strikes"] == [23100.0]
+
+    option_chain = client.get(
+        "/api/v1/instruments/derivatives/options",
+        params={
+            "underlying": "NIFTY",
+            "exchange": "NSE_FNO",
+            "expiry": "2026-04-25",
+            "option_type": "CE",
+        },
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert option_chain.status_code == 200
+    option_items = option_chain.json()["items"]
+    assert len(option_items) == 1
+    assert option_items[0]["strike"] == 23100.0
+    assert option_items[0]["option_type"] == "CE"
+
     mapping = instrument_registry_service.resolve_for_broker(
         db_session,
         canonical_id=items[0]["canonical_id"],
@@ -154,3 +198,24 @@ def test_sync_idempotent_and_search_api(
     )
     assert mapping is not None
     assert mapping.broker_trading_symbol == "INFY-EQ"
+
+
+def test_sync_endpoint_validates_payload(
+    db_session: Session, client: TestClient
+) -> None:
+    _create_user(db_session, email="u2@example.com", password="pass123")
+    access = _login(client, "u2@example.com", "pass123")
+
+    bad = client.post(
+        "/api/v1/instruments/sync/angel-master",
+        json={"scope": "nope"},
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert bad.status_code == 422
+
+    missing = client.post(
+        "/api/v1/instruments/sync/angel-master",
+        json={"scope": "fno_underlyings"},
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert missing.status_code == 400

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.instruments.types import Exchange, InstrumentType, OptionType, Segment
 
@@ -28,3 +29,32 @@ class InstrumentOut(BaseModel):
 
 class InstrumentSearchResponse(BaseModel):
     items: list[InstrumentOut]
+
+
+class DerivativeExpiriesResponse(BaseModel):
+    underlying: str
+    exchange: Exchange
+    instrument_type: InstrumentType
+    expiries: list[date]
+
+
+class DerivativeStrikesResponse(BaseModel):
+    underlying: str
+    exchange: Exchange
+    expiry: date
+    option_type: OptionType | None = None
+    strikes: list[float]
+
+
+class InstrumentSyncRequest(BaseModel):
+    scope: Literal["equity", "fno_underlyings"] = "equity"
+    underlyings: list[str] = Field(default_factory=list)
+    max_rows: int | None = Field(default=None, ge=1, le=1_000_000)
+
+
+class InstrumentSyncResponse(BaseModel):
+    source: str
+    scope: str
+    processed: int
+    ingested: int
+    skipped: int
