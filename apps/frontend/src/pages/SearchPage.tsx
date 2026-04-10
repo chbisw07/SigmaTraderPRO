@@ -14,7 +14,10 @@ import { Input } from '@/components/ui/input'
 import * as instrumentsApi from '@/lib/api/instruments'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
+import { useQuoteStore } from '@/store/quoteStore'
+import { computeAtmStrike, computeMoneyness, moneynessBadgeClasses } from '@/lib/moneyness'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
+import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 
 function useDebounced(value: string, delayMs = 250) {
   const [debounced, setDebounced] = useState(value)
@@ -44,11 +47,68 @@ function TypeBadge({
 }
 
 function formatDerivativeSuffix(i: instrumentsApi.InstrumentOut) {
+  const formatStrike = (strike: number) => {
+    if (strike >= 100_000) {
+      const v = strike / 100
+      return Number.isInteger(v) ? String(v) : v.toFixed(2)
+    }
+    return String(strike)
+  }
   const bits: string[] = []
   if (i.expiry) bits.push(i.expiry)
-  if (i.strike != null) bits.push(String(i.strike))
+  if (i.strike != null) bits.push(formatStrike(i.strike))
   if (i.option_type) bits.push(i.option_type)
   return bits.length ? bits.join(' • ') : null
+}
+
+function formatExpiryHuman(iso: string | null): string {
+  if (!iso) return '—'
+  try {
+    // iso is YYYY-MM-DD from backend (date). Force UTC so date doesn't shift.
+    const d = new Date(`${iso}T00:00:00Z`)
+    // Example: 05 May 2026
+    return new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }).format(d)
+  } catch {
+    return iso
+  }
+}
+
+function formatStrikeHuman(strike: number | null): string {
+  if (strike == null) return '—'
+  if (strike >= 100_000) {
+    const v = strike / 100
+    return Number.isInteger(v) ? String(v) : v.toFixed(2)
+  }
+  return String(strike)
+}
+
+function formatInstrumentTitle(i: instrumentsApi.InstrumentOut): string {
+  const root = (i.underlying ?? i.symbol_root).toUpperCase()
+
+  if (i.instrument_type === 'OPTION') {
+    return `${root} ${formatExpiryHuman(i.expiry)} ${formatStrikeHuman(i.strike)} ${i.option_type ?? ''}`.trim()
+  }
+  if (i.instrument_type === 'FUTURE') {
+    return `${root} ${formatExpiryHuman(i.expiry)} FUT`.trim()
+  }
+  return i.display_symbol
+}
+
+function MoneynessPill({ label }: { label: 'ATM' | 'ITM' | 'OTM' }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium',
+        moneynessBadgeClasses(label),
+      )}
+    >
+      {label}
+    </span>
+  )
 }
 
 const BROKER_OPTIONS = [
@@ -58,10 +118,15 @@ const BROKER_OPTIONS = [
 
 type BrokerKey = (typeof BROKER_OPTIONS)[number]['key']
 
+const EMPTY_INSTRUMENTS: instrumentsApi.InstrumentOut[] = []
+
 export function SearchPage() {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
   const updateLastUsedBroker = useAuthStore((s) => s.updateLastUsedBroker)
+
+  const getPremium = useQuoteStore((s) => s.getPremium)
+  const getSpot = useQuoteStore((s) => s.getSpot)
 
   const selectedBroker = (user?.last_used_broker as BrokerKey | null) ?? null
 
@@ -71,7 +136,27 @@ export function SearchPage() {
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const [syncUnderlyings, setSyncUnderlyings] = useState('NIFTY,BANKNIFTY')
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
-  const [selectedStock, setSelectedStock] = useState<instrumentsApi.InstrumentOut | null>(null)
+  const [stockLaunch, setStockLaunch] = useState<
+    | { mode: 'manual'; broker?: BrokerKey | null }
+    | {
+        mode: 'contract'
+        instrument: instrumentsApi.InstrumentOut
+        broker?: BrokerKey | null
+        referencePrice?: number | null
+      }
+    | null
+  >(null)
+  const [fnoDialogOpen, setFnoDialogOpen] = useState(false)
+  const [fnoLaunch, setFnoLaunch] = useState<
+    | { mode: 'manual'; broker?: BrokerKey | null }
+    | {
+        mode: 'contract'
+        instrument: instrumentsApi.InstrumentOut
+        broker?: BrokerKey | null
+        referencePrice?: number | null
+      }
+    | null
+  >(null)
 
   const [q, setQ] = useState('')
   const [filterType, setFilterType] = useState<
@@ -160,7 +245,15 @@ export function SearchPage() {
     enabled: Boolean(accessToken) && Boolean(underlying) && Boolean(expiry),
   })
 
-  const chainItems = optionChain.data?.items ?? []
+  const chainItems = optionChain.data?.items ?? EMPTY_INSTRUMENTS
+  const formatStrikeDisplay = formatStrikeHuman
+  const chainSpot = useMemo(() => (underlying ? getSpot(underlying) : null), [getSpot, underlying])
+  const chainAtmStrike = useMemo(() => {
+    const strikes = chainItems
+      .map((i) => i.strike)
+      .filter((s): s is number => typeof s === 'number' && Number.isFinite(s))
+    return computeAtmStrike(strikes, { spot: chainSpot, anchorStrike: null })
+  }, [chainItems, chainSpot])
 
   const onBrokerChange = async (next: string) => {
     const nextValue = next === '' ? null : next
@@ -171,6 +264,16 @@ export function SearchPage() {
     } finally {
       setBrokerBusy(false)
     }
+  }
+
+  const onStockDialogOpenChange = (next: boolean) => {
+    setStockDialogOpen(next)
+    if (!next) setStockLaunch(null)
+  }
+
+  const onFnoDialogOpenChange = (next: boolean) => {
+    setFnoDialogOpen(next)
+    if (!next) setFnoLaunch(null)
   }
 
   const applyUnderlyingFromInput = () => {
@@ -229,13 +332,39 @@ export function SearchPage() {
     }
   }
 
+  const onSyncZerodhaNfo = async () => {
+    if (!accessToken) return
+    const underlyings = syncUnderlyings
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean)
+    if (!underlyings.length) {
+      setSyncMsg('Enter at least one underlying (e.g. NIFTY,BANKNIFTY) to sync Zerodha F&O mappings.')
+      return
+    }
+    setSyncBusy(true)
+    setSyncMsg(null)
+    try {
+      const res = await instrumentsApi.syncZerodhaNfo(accessToken, { underlyings })
+      setSyncMsg(`Zerodha NFO sync complete. ingested=${res.ingested} (processed=${res.processed}, skipped=${res.skipped})`)
+    } catch (e) {
+      setSyncMsg(
+        typeof e === 'object' && e && 'message' in e
+          ? String((e as { message?: unknown }).message ?? 'Sync failed')
+          : 'Sync failed',
+      )
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Search</h1>
           <p className="text-sm text-muted-foreground">
-            Canonical-first instrument search (no broker symbols in UI). Strike discovery is read-only for now.
+            Canonical-first instrument search (no broker symbols in UI). Use Trade to open stock or F&amp;O tickets.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -283,6 +412,9 @@ export function SearchPage() {
               <Button type="button" size="sm" variant="outline" onClick={() => void onSyncFno()} disabled={syncBusy}>
                 Sync F&amp;O (underlyings)
               </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncZerodhaNfo()} disabled={syncBusy}>
+                Sync Zerodha NFO mappings
+              </Button>
             </div>
           </div>
           {syncMsg ? (
@@ -291,7 +423,7 @@ export function SearchPage() {
             </div>
           ) : (
             <div className="text-xs text-muted-foreground">
-              Tip: start with equities, then sync F&amp;O for NIFTY/BANKNIFTY.
+              Tip: start with equities, then sync F&amp;O for NIFTY/BANKNIFTY. For Zerodha F&amp;O orders, also sync Zerodha NFO mappings.
             </div>
           )}
         </CardContent>
@@ -344,20 +476,48 @@ export function SearchPage() {
             <div className="text-xs text-muted-foreground">Searching…</div>
           ) : null}
 
-          {debouncedQ && !results.length && !search.isFetching ? (
-            <div className="text-xs text-muted-foreground">No matches.</div>
+          {search.isError ? (
+            <div className="text-xs text-destructive">
+              Search failed. Open DevTools → Network → <span className="font-mono">/api/v1/instruments/search</span> for details.
+            </div>
+          ) : null}
+
+          {debouncedQ && !results.length && !search.isFetching && !search.isError ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>
+                No matches{filterType !== 'all' ? ` in ${filterType}` : ''}.
+              </span>
+              {filterType !== 'all' ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setFilterType('all')}
+                >
+                  Try All
+                </Button>
+              ) : null}
+              <span className="text-muted-foreground/80">
+                If you reset the DB, run Sync equities (stocks/ETFs) and Sync F&amp;O (underlyings) for options/futures.
+              </span>
+            </div>
           ) : null}
 
           {results.length ? (
             <div className="divide-y rounded-lg border bg-card">
               {results.map((i) => {
                 const suffix = formatDerivativeSuffix(i)
-                const canTrade = i.segment === 'EQUITY' && (i.instrument_type === 'EQUITY' || i.instrument_type === 'ETF')
+                const canStockTrade =
+                  i.segment === 'EQUITY' &&
+                  (i.instrument_type === 'EQUITY' || i.instrument_type === 'ETF')
+                const canFnoTrade =
+                  i.exchange === 'NSE_FNO' &&
+                  (i.instrument_type === 'OPTION' || i.instrument_type === 'FUTURE')
                 return (
                   <div key={i.canonical_id} className="flex flex-wrap items-center justify-between gap-3 p-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <div className="font-medium">{i.display_symbol}</div>
+                        <div className="font-medium">{formatInstrumentTitle(i)}</div>
                         <TypeBadge instrument={i} />
                         <Badge variant="outline">{i.exchange}</Badge>
                         <Badge variant="outline">{i.segment}</Badge>
@@ -371,14 +531,36 @@ export function SearchPage() {
                         {i.canonical_id}
                       </div>
                     </div>
-                    {canTrade ? (
+                    {canStockTrade ? (
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
                         onClick={() => {
-                          setSelectedStock(i)
+                          setStockLaunch({
+                            mode: 'contract',
+                            instrument: i,
+                            broker: selectedBroker,
+                          })
                           setStockDialogOpen(true)
+                        }}
+                      >
+                        Trade
+                      </Button>
+                    ) : canFnoTrade ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const ref = getPremium(i.canonical_id)
+                          setFnoLaunch({
+                            mode: 'contract',
+                            instrument: i,
+                            broker: selectedBroker,
+                            referencePrice: ref,
+                          })
+                          setFnoDialogOpen(true)
                         }}
                       >
                         Trade
@@ -396,7 +578,7 @@ export function SearchPage() {
         <CardHeader>
           <CardTitle>F&amp;O strike discovery</CardTitle>
           <CardDescription>
-            Select an underlying, pick expiry and CE/PE to browse the canonical option chain. No order actions yet.
+            Select an underlying, pick expiry and CE/PE to browse the canonical option chain. Use Trade to open the F&amp;O ticket.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -534,15 +716,50 @@ export function SearchPage() {
                   <div key={i.canonical_id} className="flex items-center justify-between gap-3 px-3 py-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <div className="font-medium tabular-nums">{i.strike ?? '—'}</div>
+                        <div className="font-medium tabular-nums">{formatStrikeDisplay(i.strike)}</div>
                         <Badge variant="outline">{i.option_type}</Badge>
+                        {typeof i.strike === 'number' && i.option_type ? (
+                          <MoneynessPill
+                            label={computeMoneyness(i.strike, { optionType, spot: chainSpot, atmStrike: chainAtmStrike })}
+                          />
+                        ) : null}
                         <div className="text-xs text-muted-foreground">
                           lot {i.lot_size ?? '—'}
                         </div>
+                        {(() => {
+                          const p = getPremium(i.canonical_id)
+                          return p != null ? (
+                            <div className="text-xs text-muted-foreground">
+                              prem <span className="font-medium tabular-nums">₹{p}</span>
+                            </div>
+                          ) : null
+                        })()}
                       </div>
                       <div className="mt-1 break-all text-xs text-muted-foreground">{i.canonical_id}</div>
                     </div>
-                    <div className="text-xs text-muted-foreground">{i.display_symbol}</div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-xs text-muted-foreground">
+                        {(i.underlying ?? i.symbol_root).toUpperCase()} {i.expiry ?? '—'}{' '}
+                        {formatStrikeDisplay(i.strike)} {i.option_type ?? '—'}
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const ref = getPremium(i.canonical_id)
+                          setFnoLaunch({
+                            mode: 'contract',
+                            instrument: i,
+                            broker: selectedBroker,
+                            referencePrice: ref,
+                          })
+                          setFnoDialogOpen(true)
+                        }}
+                      >
+                        Trade
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -556,11 +773,29 @@ export function SearchPage() {
         </CardContent>
       </Card>
 
-      {selectedStock ? (
+      {stockLaunch ? (
         <StockOrderDialog
+          key={
+            stockLaunch.mode === 'contract'
+              ? stockLaunch.instrument.canonical_id
+              : 'stock-manual'
+          }
           open={stockDialogOpen}
-          onOpenChange={setStockDialogOpen}
-          instrument={selectedStock}
+          onOpenChange={onStockDialogOpenChange}
+          launch={stockLaunch}
+        />
+      ) : null}
+
+      {fnoLaunch ? (
+        <FnoOrderDialog
+          key={
+            fnoLaunch.mode === 'contract'
+              ? fnoLaunch.instrument.canonical_id
+              : 'fno-manual'
+          }
+          open={fnoDialogOpen}
+          onOpenChange={onFnoDialogOpenChange}
+          launch={fnoLaunch}
         />
       ) : null}
     </div>

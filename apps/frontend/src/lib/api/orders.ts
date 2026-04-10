@@ -2,7 +2,7 @@ import { apiRequest } from '@/lib/api/client'
 
 export type BrokerKey = 'angel' | 'zerodha'
 export type OrderSide = 'BUY' | 'SELL'
-export type OrderProduct = 'CNC' | 'MIS'
+export type OrderProduct = 'CNC' | 'MIS' | 'NRML'
 export type OrderType = 'MARKET' | 'LIMIT'
 
 export type StockOrderBase = {
@@ -11,6 +11,22 @@ export type StockOrderBase = {
   side: OrderSide
   quantity: number
   product: OrderProduct
+  order_type: OrderType
+  limit_price?: number | null
+}
+
+export type DerivativeInstrumentType = 'OPTION' | 'FUTURE'
+
+export type FnoOrderBase = {
+  broker: BrokerKey
+  instrument_type: DerivativeInstrumentType
+  underlying: string
+  expiry: string
+  strike?: number | null
+  option_type?: 'CE' | 'PE' | null
+  side: OrderSide
+  lots: number
+  product: 'MIS' | 'NRML'
   order_type: OrderType
   limit_price?: number | null
 }
@@ -56,6 +72,29 @@ export type StockOrderCreateResponse = {
   preview: StockOrderPreviewResponse
 }
 
+export type FnoOrderPreviewResponse = {
+  instrument: InstrumentOut
+  routing: {
+    broker: BrokerKey
+    exchange: string
+    trading_symbol: string
+  }
+  side: OrderSide
+  lots: number
+  quantity: number
+  product: 'MIS' | 'NRML'
+  order_type: OrderType
+  limit_price: number | null
+  warnings: string[]
+}
+
+export type FnoOrderCreateResponse = {
+  order_id: number
+  status: string
+  broker_order_id: string | null
+  preview: FnoOrderPreviewResponse
+}
+
 export async function previewStockOrder(
   accessToken: string,
   payload: StockOrderBase,
@@ -78,3 +117,24 @@ export async function createStockOrder(
   })
 }
 
+export async function previewFnoOrder(
+  accessToken: string,
+  payload: FnoOrderBase,
+): Promise<FnoOrderPreviewResponse> {
+  return apiRequest<FnoOrderPreviewResponse>('/api/v1/orders/fno/preview', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function createFnoOrder(
+  accessToken: string,
+  payload: FnoOrderBase,
+): Promise<FnoOrderCreateResponse> {
+  return apiRequest<FnoOrderCreateResponse>('/api/v1/orders/fno', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(payload),
+  })
+}

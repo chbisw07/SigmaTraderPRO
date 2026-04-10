@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logger import get_logger, log_event
-from app.services.instrument_normalizer import normalize_angel_instrument
+from app.services.instrument_normalizer import (
+    normalize_angel_instrument,
+    normalize_zerodha_instrument,
+)
 from app.services.instrument_registry_service import instrument_registry_service
 
 logger = get_logger(__name__)
@@ -53,6 +56,42 @@ class InstrumentSyncService:
             category="instruments",
             event_type="sync",
             broker="angel",
+            processed=processed,
+            ingested=ingested,
+            skipped=skipped,
+        )
+        return SyncResult(processed=processed, ingested=ingested, skipped=skipped)
+
+    def sync_zerodha_rows(self, db: Session, rows: list[dict[str, Any]]) -> SyncResult:
+        processed = 0
+        ingested = 0
+        skipped = 0
+
+        batch_size = 1000
+        pending = 0
+
+        for row in rows:
+            processed += 1
+            normalized = normalize_zerodha_instrument(row)
+            if not normalized:
+                skipped += 1
+                continue
+            instrument_registry_service.ingest_normalized(db, normalized)
+            ingested += 1
+            pending += 1
+            if pending >= batch_size:
+                db.commit()
+                pending = 0
+
+        if pending:
+            db.commit()
+
+        log_event(
+            logger,
+            "instrument_sync_completed",
+            category="instruments",
+            event_type="sync",
+            broker="zerodha",
             processed=processed,
             ingested=ingested,
             skipped=skipped,
@@ -113,6 +152,54 @@ class InstrumentSyncService:
                 break
 
         return self.sync_angel_rows(db, selected)
+
+    def sync_zerodha_nfo(
+        self,
+        db: Session,
+        *,
+        api_key: str,
+        access_token: str | None = None,
+        underlyings: list[str] | None = None,
+        max_rows: int | None = None,
+    ) -> SyncResult:
+        from kiteconnect import KiteConnect  # local import to keep core slim
+
+        kite = KiteConnect(api_key=api_key)
+        if access_token:
+            kite.set_access_token(access_token)
+        try:
+            rows = kite.instruments("NFO")
+        except Exception as exc:  # noqa: BLE001 - external SDK best-effort
+            msg = str(exc).strip().replace("\n", " ")
+            msg = msg[:240] if msg else "unknown error"
+            raise ValueError(
+                "Zerodha instruments fetch failed. "
+                "Reconnect Zerodha and retry. "
+                f"({msg})"
+            ) from exc
+        if not isinstance(rows, list):
+            raise ValueError("Zerodha instruments payload must be a list")
+
+        underlyings_set = {
+            u.strip().upper()
+            for u in (underlyings or [])
+            if isinstance(u, str) and u.strip()
+        }
+        if not underlyings_set:
+            raise ValueError("underlyings is required for zerodha_nfo sync")
+
+        selected: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").strip().upper()
+            if name not in underlyings_set:
+                continue
+            selected.append(row)
+            if max_rows and len(selected) >= max_rows:
+                break
+
+        return self.sync_zerodha_rows(db, selected)
 
 
 instrument_sync_service = InstrumentSyncService()

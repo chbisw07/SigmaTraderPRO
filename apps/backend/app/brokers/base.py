@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.brokers.types import BrokerKey, BrokerStatus
 from app.models.user import User
-from app.orders.types import EquityOrderRequest, EquityOrderResult
+from app.orders.types import (
+    DerivativeOrderRequest,
+    DerivativeOrderResult,
+    EquityOrderRequest,
+    EquityOrderResult,
+)
 
 
 class BrokerError(RuntimeError):
@@ -47,4 +52,10 @@ class BrokerAdapter(ABC):
     def place_equity_order(
         self, db: Session, user: User, *, request: EquityOrderRequest
     ) -> EquityOrderResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def place_derivative_order(
+        self, db: Session, user: User, *, request: DerivativeOrderRequest
+    ) -> DerivativeOrderResult:
         raise NotImplementedError

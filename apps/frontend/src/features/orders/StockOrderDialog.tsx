@@ -18,33 +18,58 @@ import * as ordersApi from '@/lib/api/orders'
 import type * as instrumentsApi from '@/lib/api/instruments'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
+import { useOrderPrefsStore } from '@/store/orderPrefsStore'
 
 type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  instrument: instrumentsApi.InstrumentOut
+  launch:
+    | { mode: 'manual'; broker?: ordersApi.BrokerKey | null }
+    | {
+        mode: 'contract'
+        instrument: instrumentsApi.InstrumentOut
+        broker?: ordersApi.BrokerKey | null
+        referencePrice?: number | null
+      }
 }
 
 function isCashInstrument(i: instrumentsApi.InstrumentOut) {
   return i.segment === 'EQUITY' && (i.instrument_type === 'EQUITY' || i.instrument_type === 'ETF')
 }
 
-export function StockOrderDialog({ open, onOpenChange, instrument }: Props) {
+export function StockOrderDialog({ open, onOpenChange, launch }: Props) {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
   const updateLastUsedBroker = useAuthStore((s) => s.updateLastUsedBroker)
 
-  const [broker, setBroker] = useState<ordersApi.BrokerKey>(
-    (user?.last_used_broker as ordersApi.BrokerKey | null) ?? 'angel',
-  )
+  const stockProduct = useOrderPrefsStore((s) => s.stockProduct)
+  const stockOrderType = useOrderPrefsStore((s) => s.stockOrderType)
+  const setStockProduct = useOrderPrefsStore((s) => s.setStockProduct)
+  const setStockOrderType = useOrderPrefsStore((s) => s.setStockOrderType)
+
+  const instrument = launch.mode === 'contract' ? launch.instrument : null
+  const initialBroker =
+    (launch.broker as ordersApi.BrokerKey | null | undefined) ??
+    (user?.last_used_broker === 'angel' || user?.last_used_broker === 'zerodha'
+      ? (user.last_used_broker as ordersApi.BrokerKey)
+      : null) ??
+    'angel'
+
+  const [broker, setBroker] = useState<ordersApi.BrokerKey>(initialBroker)
   const [side, setSide] = useState<ordersApi.OrderSide>('BUY')
   const [quantity, setQuantity] = useState(1)
-  const [product, setProduct] = useState<ordersApi.OrderProduct>('CNC')
-  const [orderType, setOrderType] = useState<ordersApi.OrderType>('MARKET')
-  const [limitPrice, setLimitPrice] = useState<number | null>(null)
+  const [product, setProduct] = useState<ordersApi.OrderProduct>(stockProduct)
+  const [orderType, setOrderType] = useState<ordersApi.OrderType>(stockOrderType)
+  const [limitPrice, setLimitPrice] = useState<number | null>(
+    stockOrderType === 'LIMIT' && launch.mode === 'contract'
+      ? (launch.referencePrice ?? null)
+      : null,
+  )
 
   const [message, setMessage] = useState<string | null>(null)
   const [preview, setPreview] = useState<ordersApi.StockOrderPreviewResponse | null>(null)
+
+  const canTrade = instrument ? isCashInstrument(instrument) : false
 
   const brokers = useQuery({
     queryKey: ['brokers', 'status'],
@@ -70,19 +95,17 @@ export function StockOrderDialog({ open, onOpenChange, instrument }: Props) {
     return map
   }, [brokers.data])
 
-  const canTrade = isCashInstrument(instrument)
-
   const payload = useMemo<ordersApi.StockOrderBase>(
     () => ({
       broker,
-      canonical_id: instrument.canonical_id,
+      canonical_id: instrument?.canonical_id ?? '',
       side,
       quantity,
       product,
       order_type: orderType,
       limit_price: orderType === 'LIMIT' ? limitPrice : null,
     }),
-    [broker, instrument.canonical_id, side, quantity, product, orderType, limitPrice],
+    [broker, instrument?.canonical_id, side, quantity, product, orderType, limitPrice],
   )
 
   const previewMutation = useMutation({
@@ -141,28 +164,34 @@ export function StockOrderDialog({ open, onOpenChange, instrument }: Props) {
         <DialogHeader>
           <DialogTitle>Stock order</DialogTitle>
           <DialogDescription>
-            Manual cash order (S4.1). Uses canonical instrument ID and resolves broker routing internally.
+            {launch.mode === 'contract'
+              ? 'Contract-driven cash order (S4.1). Uses selected canonical instrument and resolves broker routing internally.'
+              : 'Manual cash order (S4.1). Uses canonical instrument ID and resolves broker routing internally.'}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="rounded-lg border bg-card p-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="font-medium">{instrument.display_symbol}</div>
-                  <Badge variant="outline">{instrument.exchange}</Badge>
-                  <Badge variant="outline">{instrument.segment}</Badge>
+          {instrument ? (
+            <div className="rounded-lg border bg-card p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="font-medium">{instrument.display_symbol}</div>
+                    <Badge variant="outline">{instrument.exchange}</Badge>
+                    <Badge variant="outline">{instrument.segment}</Badge>
+                  </div>
+                  <div className="mt-1 break-all text-xs text-muted-foreground">
+                    {instrument.canonical_id}
+                  </div>
                 </div>
-                <div className="mt-1 break-all text-xs text-muted-foreground">
-                  {instrument.canonical_id}
-                </div>
+                {!canTrade ? <Badge variant="outline">Not cash-compatible</Badge> : null}
               </div>
-              {!canTrade ? (
-                <Badge variant="outline">Not cash-compatible</Badge>
-              ) : null}
             </div>
-          </div>
+          ) : (
+            <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
+              No instrument selected. Use <span className="font-medium">Trade</span> from Search results to open a contract-driven ticket.
+            </div>
+          )}
 
           <div className="grid gap-3 lg:grid-cols-3">
             <div className="space-y-1">
@@ -238,7 +267,9 @@ export function StockOrderDialog({ open, onOpenChange, instrument }: Props) {
                 aria-label="Order product"
                 value={product}
                 onChange={(e) => {
-                  setProduct(e.target.value as ordersApi.OrderProduct)
+                  const next = e.target.value as ordersApi.OrderProduct
+                  setProduct(next)
+                  setStockProduct(next)
                   setPreview(null)
                 }}
                 className={cn(
@@ -257,7 +288,9 @@ export function StockOrderDialog({ open, onOpenChange, instrument }: Props) {
                 aria-label="Order type"
                 value={orderType}
                 onChange={(e) => {
-                  setOrderType(e.target.value as ordersApi.OrderType)
+                  const next = e.target.value as ordersApi.OrderType
+                  setOrderType(next)
+                  setStockOrderType(next)
                   setPreview(null)
                 }}
                 className={cn(
@@ -294,26 +327,38 @@ export function StockOrderDialog({ open, onOpenChange, instrument }: Props) {
             </div>
           </div>
 
-          {preview ? (
-            <div className="rounded-lg border bg-card p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">Preview</div>
+          <div className="rounded-lg border bg-card p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <div className="text-sm font-medium">Preview</div>
+                {preview ? (
                   <div className="text-xs text-muted-foreground">
                     Routing: {preview.routing.broker} • {preview.routing.exchange} • {preview.routing.trading_symbol}
                   </div>
-                </div>
-                <Badge variant="outline">Ready</Badge>
+                ) : (
+                  <div className="text-xs text-muted-foreground">
+                    {instrument ? (
+                      <>
+                        Prefilled for <span className="font-medium">{instrument.display_symbol}</span>. Click Preview to validate routing.
+                      </>
+                    ) : (
+                      <>Select a cash instrument to preview routing.</>
+                    )}
+                  </div>
+                )}
               </div>
-              {preview.warnings.length ? (
-                <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-                  {preview.warnings.map((w) => (
-                    <li key={w}>{w}</li>
-                  ))}
-                </ul>
-              ) : null}
+              <Badge variant="outline">
+                {preview ? 'Ready' : launch.mode === 'contract' && canTrade ? 'Prefilled' : 'Draft'}
+              </Badge>
             </div>
-          ) : null}
+            {preview?.warnings.length ? (
+              <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                {preview.warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
 
           {!schemaOk ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">

@@ -32,6 +32,23 @@ class NormalizedInstrument:
     raw: dict[str, Any] | None
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        try:
+            return float(value)
+        except Exception:
+            return str(value)
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
+
 def _parse_date(value: Any) -> date | None:
     if value is None:
         return None
@@ -199,7 +216,7 @@ def normalize_angel_instrument(row: dict[str, Any]) -> NormalizedInstrument | No
             broker_key=BrokerKey.angel,
             broker_instrument_id=token,
             broker_trading_symbol=symbol or None,
-            raw=row,
+            raw=_json_safe(row),
         )
 
     # Derivatives (Angel uses NFO for F&O)
@@ -252,7 +269,145 @@ def normalize_angel_instrument(row: dict[str, Any]) -> NormalizedInstrument | No
             broker_key=BrokerKey.angel,
             broker_instrument_id=token,
             broker_trading_symbol=symbol or None,
-            raw=row,
+            raw=_json_safe(row),
+        )
+
+    return None
+
+
+def _parse_zerodha_expiry(value: Any) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        # KiteConnect usually returns YYYY-MM-DD
+        if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+            return date.fromisoformat(s[:10])
+    except Exception:
+        return None
+    return None
+
+
+def _strike_to_paise(value: Any) -> float | None:
+    strike = _parse_float(value)
+    if strike is None:
+        return None
+    if strike <= 0:
+        return None
+    # Canonical registry currently stores strikes in "paise" units (x100) for NFO.
+    # Keep it stable across brokers to enable mapping joins.
+    if strike < 100000:
+        return float(Decimal(str(strike)) * Decimal("100"))
+    return float(strike)
+
+
+def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | None:
+    exchange = str(row.get("exchange") or "").strip().upper()
+    if exchange != "NFO":
+        return None
+
+    token = row.get("instrument_token")
+    if token is None:
+        return None
+
+    tradingsymbol = str(row.get("tradingsymbol") or "").strip()
+    name = str(row.get("name") or "").strip().upper()
+    inst_type_raw = str(row.get("instrument_type") or "").strip().upper()
+
+    expiry = _parse_zerodha_expiry(row.get("expiry"))
+    lot_size = _parse_int(row.get("lot_size"))
+    tick_size = _parse_float(row.get("tick_size"))
+
+    if inst_type_raw in {"CE", "PE"}:
+        strike = _strike_to_paise(row.get("strike"))
+        if strike is None or not expiry or not name:
+            return None
+        opt_type = OptionType(inst_type_raw)
+        segment = Segment.OPTION
+        inst_type = InstrumentType.OPTION
+        display = _display_symbol(
+            instrument_type=inst_type,
+            symbol_root=name,
+            expiry=expiry,
+            strike=strike,
+            option_type=opt_type,
+        )
+        canonical = _canonical_id(
+            exchange=Exchange.NSE_FNO,
+            segment=segment,
+            instrument_type=inst_type,
+            symbol_root=name,
+            expiry=expiry,
+            strike=strike,
+            option_type=opt_type,
+        )
+        return NormalizedInstrument(
+            canonical_id=canonical,
+            exchange=Exchange.NSE_FNO,
+            segment=segment,
+            instrument_type=inst_type,
+            symbol_root=name,
+            display_symbol=display,
+            underlying=name,
+            expiry=expiry,
+            strike=strike,
+            option_type=opt_type,
+            lot_size=lot_size,
+            tick_size=tick_size,
+            isin=None,
+            is_active=True,
+            broker_key=BrokerKey.zerodha,
+            broker_instrument_id=str(token),
+            broker_trading_symbol=tradingsymbol or None,
+            raw=_json_safe(row),
+        )
+
+    if inst_type_raw == "FUT":
+        if not expiry or not name:
+            return None
+        segment = Segment.FUTURE
+        inst_type = InstrumentType.FUTURE
+        display = _display_symbol(
+            instrument_type=inst_type,
+            symbol_root=name,
+            expiry=expiry,
+            strike=None,
+            option_type=None,
+        )
+        canonical = _canonical_id(
+            exchange=Exchange.NSE_FNO,
+            segment=segment,
+            instrument_type=inst_type,
+            symbol_root=name,
+            expiry=expiry,
+            strike=None,
+            option_type=None,
+        )
+        return NormalizedInstrument(
+            canonical_id=canonical,
+            exchange=Exchange.NSE_FNO,
+            segment=segment,
+            instrument_type=inst_type,
+            symbol_root=name,
+            display_symbol=display,
+            underlying=name,
+            expiry=expiry,
+            strike=None,
+            option_type=None,
+            lot_size=lot_size,
+            tick_size=tick_size,
+            isin=None,
+            is_active=True,
+            broker_key=BrokerKey.zerodha,
+            broker_instrument_id=str(token),
+            broker_trading_symbol=tradingsymbol or None,
+            raw=_json_safe(row),
         )
 
     return None

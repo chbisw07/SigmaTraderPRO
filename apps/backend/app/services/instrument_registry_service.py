@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any
 
@@ -122,27 +123,37 @@ class InstrumentRegistryService:
         instrument_type: InstrumentType | None = None,
         option_type: OptionType | None = None,
     ) -> list[Instrument]:
-        term = q.strip().lower()
-        if not term:
+        raw = q.strip().lower()
+        if not raw:
+            return []
+
+        # Tokenized AND search:
+        # - "nifty 23" matches instruments containing both tokens
+        # - supports filtering by partial strike / expiry (via canonical_id tokens)
+        tokens = [t for t in re.findall(r"[a-z0-9]+", raw) if t]
+        if not tokens:
             return []
 
         qry = db.query(Instrument).filter(Instrument.is_active.is_(True))
 
-        like = f"%{term}%"
-        qry = qry.filter(
-            or_(
-                func.lower(Instrument.display_symbol).like(like),
-                func.lower(Instrument.symbol_root).like(like),
-                func.lower(func.coalesce(Instrument.underlying, "")).like(like),
+        for token in tokens:
+            like = f"%{token}%"
+            qry = qry.filter(
+                or_(
+                    func.lower(Instrument.display_symbol).like(like),
+                    func.lower(Instrument.symbol_root).like(like),
+                    func.lower(func.coalesce(Instrument.underlying, "")).like(like),
+                    func.lower(Instrument.canonical_id).like(like),
+                )
             )
-        )
 
         # Relevance ordering: prefer exact/root matches over substring collisions
+        primary = tokens[0]
         priority = case(
-            (func.lower(Instrument.symbol_root) == term, 0),
-            (func.lower(func.coalesce(Instrument.underlying, "")) == term, 1),
-            (func.lower(Instrument.display_symbol).like(f"{term}%"), 2),
-            (func.lower(Instrument.symbol_root).like(f"{term}%"), 3),
+            (func.lower(Instrument.symbol_root) == primary, 0),
+            (func.lower(func.coalesce(Instrument.underlying, "")) == primary, 1),
+            (func.lower(Instrument.display_symbol).like(f"{primary}%"), 2),
+            (func.lower(Instrument.symbol_root).like(f"{primary}%"), 3),
             else_=10,
         )
 
@@ -155,11 +166,36 @@ class InstrumentRegistryService:
         if option_type:
             qry = qry.filter(Instrument.option_type == option_type.value)
 
-        return (
-            qry.order_by(priority.asc(), Instrument.display_symbol.asc())
-            .limit(max(1, min(limit, 100)))
-            .all()
+        # Cross-DB friendly "NULLS LAST" emulation for sqlite-backed unit tests.
+        expiry_nulls_last = case((Instrument.expiry.is_(None), 1), else_=0)
+        strike_nulls_last = case((Instrument.strike.is_(None), 1), else_=0)
+        option_type_order = case(
+            (Instrument.option_type == "CE", 0),
+            (Instrument.option_type == "PE", 1),
+            else_=2,
         )
+
+        if instrument_type == InstrumentType.OPTION:
+            order_by = [
+                priority.asc(),
+                expiry_nulls_last.asc(),
+                Instrument.expiry.asc(),
+                strike_nulls_last.asc(),
+                Instrument.strike.asc(),
+                option_type_order.asc(),
+                Instrument.display_symbol.asc(),
+            ]
+        elif instrument_type == InstrumentType.FUTURE:
+            order_by = [
+                priority.asc(),
+                expiry_nulls_last.asc(),
+                Instrument.expiry.asc(),
+                Instrument.display_symbol.asc(),
+            ]
+        else:
+            order_by = [priority.asc(), Instrument.display_symbol.asc()]
+
+        return qry.order_by(*order_by).limit(max(1, min(limit, 100))).all()
 
     def get_by_canonical_id(self, db: Session, canonical_id: str) -> Instrument | None:
         return (

@@ -175,3 +175,19 @@ export async function syncAngelMaster(
     body: JSON.stringify(payload),
   })
 }
+
+export type ZerodhaNfoSyncRequest = {
+  underlyings?: string[]
+  max_rows?: number
+}
+
+export async function syncZerodhaNfo(
+  accessToken: string,
+  payload: ZerodhaNfoSyncRequest,
+): Promise<InstrumentSyncResponse> {
+  return apiRequest<InstrumentSyncResponse>('/api/v1/instruments/sync/zerodha-nfo', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(payload),
+  })
+}

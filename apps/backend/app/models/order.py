@@ -10,7 +10,7 @@ from app.models.base import Base
 
 class Order(Base):
     """
-    Minimal manual order record (cash instruments only for S4.1).
+    Minimal manual order record (expanded for cash + F&O tickets in S4.x).
 
     Canonical-first: `canonical_id` is the stable instrument identity.
     Broker-specific identifiers (e.g. broker_order_id) are stored but not treated
@@ -27,6 +27,7 @@ class Order(Base):
 
     side: Mapped[str] = mapped_column(String(8), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    lots: Mapped[int | None] = mapped_column(Integer, nullable=True)
     product: Mapped[str] = mapped_column(String(16), nullable=False)
     order_type: Mapped[str] = mapped_column(String(16), nullable=False)
     limit_price: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)

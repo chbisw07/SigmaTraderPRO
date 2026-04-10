@@ -19,6 +19,8 @@ from app.core.time import today_ist
 from app.models.broker_connection import BrokerConnection
 from app.models.user import User
 from app.orders.types import (
+    DerivativeOrderRequest,
+    DerivativeOrderResult,
     EquityOrderRequest,
     EquityOrderResult,
     OrderProduct,
@@ -319,3 +321,86 @@ class AngelAdapter(BrokerAdapter):
             broker_order_id=broker_order_id,
         )
         return EquityOrderResult(broker_order_id=broker_order_id)
+
+    def place_derivative_order(
+        self, db: Session, user: User, *, request: DerivativeOrderRequest
+    ) -> DerivativeOrderResult:
+        conn = _get_connection(db, user.id)
+        if not conn or not conn.credentials_enc:
+            raise BrokerNotConfiguredError("Broker is not configured")
+        status = _compute_status(conn)
+        if not status.connected or status.stale:
+            raise BrokerNotConfiguredError("Broker session is not connected")
+        if not conn.session_enc:
+            raise BrokerNotConfiguredError("Broker session is missing")
+
+        try:
+            creds = decrypt_json(
+                conn.credentials_enc, key=settings.broker_encryption_key
+            )
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+        except CryptoError as exc:
+            raise BrokerNotConfiguredError("Broker session decrypt failed") from exc
+
+        jwt_token = str(session.get("jwt_token") or "")
+        if not jwt_token:
+            raise BrokerNotConfiguredError("Broker session token missing")
+
+        if not request.contract.symbol_token:
+            raise BrokerNotConfiguredError("Angel order requires symbol token mapping")
+
+        product_type = "INTRADAY"
+        if request.product == OrderProduct.NRML:
+            product_type = "CARRYFORWARD"
+        elif request.product == OrderProduct.MIS:
+            product_type = "INTRADAY"
+        else:
+            raise BrokerNotConfiguredError("Invalid derivative product type")
+
+        order_type = "MARKET" if request.order_type == OrderType.MARKET else "LIMIT"
+
+        try:
+            broker_order_id = place_order(
+                api_key=str(creds["api_key"]),
+                jwt_token=jwt_token,
+                exchange=request.contract.exchange,
+                trading_symbol=request.contract.trading_symbol,
+                symbol_token=str(request.contract.symbol_token),
+                transaction_type=request.side.value,
+                quantity=request.quantity,
+                product_type=product_type,
+                order_type=order_type,
+                price=(
+                    request.limit_price
+                    if request.order_type == OrderType.LIMIT
+                    else None
+                ),
+            )
+        except (KeyError, AngelOrderError) as exc:
+            conn.last_error = str(exc)
+            db.commit()
+            log_event(
+                logger,
+                "broker_order_failed",
+                category="orders",
+                event_type="place_order",
+                broker=BrokerKey.angel.value,
+                user_id=user.id,
+                instrument_key="fno",
+                status="failed",
+                error=str(exc),
+            )
+            raise
+
+        log_event(
+            logger,
+            "broker_order_placed",
+            category="orders",
+            event_type="place_order",
+            broker=BrokerKey.angel.value,
+            user_id=user.id,
+            instrument_key="fno",
+            status="ok",
+            broker_order_id=broker_order_id,
+        )
+        return DerivativeOrderResult(broker_order_id=broker_order_id)

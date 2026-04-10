@@ -6,8 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.config import settings
+from app.core.crypto import CryptoError, decrypt_json
 from app.db.session import get_db
 from app.instruments.types import Exchange, InstrumentType, OptionType, Segment
+from app.models.broker_connection import BrokerConnection
 from app.models.user import User
 from app.schemas.instrument import (
     DerivativeExpiriesResponse,
@@ -16,6 +19,7 @@ from app.schemas.instrument import (
     InstrumentSearchResponse,
     InstrumentSyncRequest,
     InstrumentSyncResponse,
+    ZerodhaNfoSyncRequest,
 )
 from app.services.instrument_registry_service import instrument_registry_service
 from app.services.instrument_sync_service import instrument_sync_service
@@ -148,6 +152,64 @@ def sync_angel_master(
     return InstrumentSyncResponse(
         source="angel_master",
         scope=payload.scope,
+        processed=result.processed,
+        ingested=result.ingested,
+        skipped=result.skipped,
+    )
+
+
+@router.post("/sync/zerodha-nfo", response_model=InstrumentSyncResponse)
+def sync_zerodha_nfo(
+    payload: ZerodhaNfoSyncRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> InstrumentSyncResponse:
+    conn = (
+        db.query(BrokerConnection)
+        .filter(BrokerConnection.user_id == current_user.id)
+        .filter(BrokerConnection.broker_key == "zerodha")
+        .one_or_none()
+    )
+    if not conn or not conn.credentials_enc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Zerodha is not configured. Save Zerodha settings first.",
+        )
+
+    try:
+        creds = decrypt_json(conn.credentials_enc, key=settings.broker_encryption_key)
+        api_key = str(creds["api_key"])
+        access_token: str | None = None
+        if conn.session_enc:
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+            access_token = str(session.get("access_token") or "") or None
+    except (CryptoError, KeyError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Zerodha session decrypt failed",
+        ) from exc
+
+    try:
+        result = instrument_sync_service.sync_zerodha_nfo(
+            db,
+            api_key=api_key,
+            access_token=access_token,
+            underlyings=payload.underlyings,
+            max_rows=payload.max_rows,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Zerodha instrument sync failed",
+        ) from exc
+
+    return InstrumentSyncResponse(
+        source="zerodha_nfo",
+        scope="fno_underlyings",
         processed=result.processed,
         ingested=result.ingested,
         skipped=result.skipped,

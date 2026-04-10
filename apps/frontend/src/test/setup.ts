@@ -144,6 +144,56 @@ beforeAll(() => {
         })
       }
 
+      if (q.includes('tcs')) {
+        return jsonResponse({
+          items: [
+            {
+              canonical_id: 'NSE_EQ:EQUITY:EQUITY:TCS',
+              exchange: 'NSE_EQ',
+              segment: 'EQUITY',
+              instrument_type: 'EQUITY',
+              symbol_root: 'TCS',
+              display_symbol: 'TCS',
+              underlying: null,
+              expiry: null,
+              strike: null,
+              option_type: null,
+              lot_size: 1,
+              tick_size: 0.05,
+              isin: 'INE467B01029',
+              is_active: true,
+              created_at: '2026-04-09T00:00:00Z',
+              updated_at: '2026-04-09T00:00:00Z',
+            },
+          ],
+        })
+      }
+
+      if (q.includes('fut')) {
+        return jsonResponse({
+          items: [
+            {
+              canonical_id: 'NSE_FNO:FUTURE:FUTURE:NIFTY:2026-04-25',
+              exchange: 'NSE_FNO',
+              segment: 'FUTURE',
+              instrument_type: 'FUTURE',
+              symbol_root: 'NIFTY',
+              display_symbol: 'NIFTY 25 Apr 2026 FUT',
+              underlying: 'NIFTY',
+              expiry: '2026-04-25',
+              strike: null,
+              option_type: null,
+              lot_size: 50,
+              tick_size: 0.05,
+              isin: null,
+              is_active: true,
+              created_at: '2026-04-09T00:00:00Z',
+              updated_at: '2026-04-09T00:00:00Z',
+            },
+          ],
+        })
+      }
+
       if (q.includes('nifty')) {
         return jsonResponse({
           items: [
@@ -178,6 +228,16 @@ beforeAll(() => {
         exchange: url.searchParams.get('exchange') ?? 'NSE_FNO',
         instrument_type: url.searchParams.get('instrument_type') ?? 'OPTION',
         expiries: ['2026-04-25'],
+      })
+    }
+
+    if (path === '/api/v1/instruments/derivatives/strikes') {
+      return jsonResponse({
+        underlying: url.searchParams.get('underlying') ?? 'NIFTY',
+        exchange: url.searchParams.get('exchange') ?? 'NSE_FNO',
+        expiry: url.searchParams.get('expiry') ?? '2026-04-25',
+        option_type: url.searchParams.get('option_type') ?? 'CE',
+        strikes: [23100, 23200],
       })
     }
 
@@ -262,6 +322,41 @@ beforeAll(() => {
       })
     }
 
+    if (path === '/api/v1/orders/fno/preview') {
+      return jsonResponse({
+        instrument: {
+          canonical_id: 'NSE_FNO:OPTION:OPTION:NIFTY:2026-05-05:2010000:CE',
+          exchange: 'NSE_FNO',
+          segment: 'OPTION',
+          instrument_type: 'OPTION',
+          symbol_root: 'NIFTY',
+          display_symbol: 'NIFTY 05 May 2026 2010000 CE',
+          underlying: 'NIFTY',
+          expiry: '2026-05-05',
+          strike: 2010000,
+          option_type: 'CE',
+          lot_size: 50,
+          tick_size: 0.05,
+          isin: null,
+          is_active: true,
+          created_at: '2026-04-09T00:00:00Z',
+          updated_at: '2026-04-09T00:00:00Z',
+        },
+        routing: {
+          broker: 'angel',
+          exchange: 'NFO',
+          trading_symbol: 'NIFTY05MAY2620100CE',
+        },
+        side: 'BUY',
+        lots: 1,
+        quantity: 50,
+        product: 'NRML',
+        order_type: 'LIMIT',
+        limit_price: 100,
+        warnings: [],
+      })
+    }
+
     if (path === '/api/v1/orders') {
       return jsonResponse({
         order_id: 1,
@@ -296,6 +391,46 @@ beforeAll(() => {
           product: 'CNC',
           order_type: 'MARKET',
           limit_price: null,
+          warnings: [],
+        },
+      })
+    }
+
+    if (path === '/api/v1/orders/fno') {
+      return jsonResponse({
+        order_id: 2,
+        status: 'submitted',
+        broker_order_id: 'BROKER_FNO_ORDER_1',
+        preview: {
+          instrument: {
+            canonical_id: 'NSE_FNO:OPTION:OPTION:NIFTY:2026-05-05:2010000:CE',
+            exchange: 'NSE_FNO',
+            segment: 'OPTION',
+            instrument_type: 'OPTION',
+            symbol_root: 'NIFTY',
+            display_symbol: 'NIFTY 05 May 2026 2010000 CE',
+            underlying: 'NIFTY',
+            expiry: '2026-05-05',
+            strike: 2010000,
+            option_type: 'CE',
+            lot_size: 50,
+            tick_size: 0.05,
+            isin: null,
+            is_active: true,
+            created_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+          },
+          routing: {
+            broker: 'angel',
+            exchange: 'NFO',
+            trading_symbol: 'NIFTY05MAY2620100CE',
+          },
+          side: 'BUY',
+          lots: 1,
+          quantity: 50,
+          product: 'NRML',
+          order_type: 'LIMIT',
+          limit_price: 100,
           warnings: [],
         },
       })

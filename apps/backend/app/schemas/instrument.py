@@ -58,3 +58,8 @@ class InstrumentSyncResponse(BaseModel):
     processed: int
     ingested: int
     skipped: int
+
+
+class ZerodhaNfoSyncRequest(BaseModel):
+    underlyings: list[str] = Field(default_factory=list)
+    max_rows: int | None = Field(default=None, ge=1, le=1_000_000)

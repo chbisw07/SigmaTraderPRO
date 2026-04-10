@@ -20,6 +20,8 @@ from app.core.time import today_ist
 from app.models.broker_connection import BrokerConnection
 from app.models.user import User
 from app.orders.types import (
+    DerivativeOrderRequest,
+    DerivativeOrderResult,
     EquityOrderRequest,
     EquityOrderResult,
     OrderProduct,
@@ -322,3 +324,82 @@ class ZerodhaAdapter(BrokerAdapter):
             broker_order_id=broker_order_id,
         )
         return EquityOrderResult(broker_order_id=broker_order_id)
+
+    def place_derivative_order(
+        self, db: Session, user: User, *, request: DerivativeOrderRequest
+    ) -> DerivativeOrderResult:
+        conn = _get_connection(db, user.id)
+        if not conn or not conn.credentials_enc:
+            raise BrokerNotConfiguredError("Broker is not configured")
+        status = _compute_status(conn)
+        if not status.connected or status.stale:
+            raise BrokerNotConfiguredError("Broker session is not connected")
+        if not conn.session_enc:
+            raise BrokerNotConfiguredError("Broker session is missing")
+
+        try:
+            creds = decrypt_json(
+                conn.credentials_enc, key=settings.broker_encryption_key
+            )
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+        except CryptoError as exc:
+            raise BrokerNotConfiguredError("Broker session decrypt failed") from exc
+
+        product = request.product.value
+        if request.product == OrderProduct.MIS:
+            product = "MIS"
+        elif request.product == OrderProduct.NRML:
+            product = "NRML"
+        else:
+            raise BrokerNotConfiguredError("Invalid derivative product type")
+
+        order_type = request.order_type.value
+        if request.order_type == OrderType.MARKET:
+            order_type = "MARKET"
+        elif request.order_type == OrderType.LIMIT:
+            order_type = "LIMIT"
+
+        try:
+            broker_order_id = place_order(
+                api_key=str(creds["api_key"]),
+                access_token=str(session["access_token"]),
+                exchange=request.contract.exchange,
+                trading_symbol=request.contract.trading_symbol,
+                transaction_type=request.side.value,
+                quantity=request.quantity,
+                product=product,
+                order_type=order_type,
+                price=(
+                    request.limit_price
+                    if request.order_type == OrderType.LIMIT
+                    else None
+                ),
+            )
+        except (KeyError, ZerodhaOrderError) as exc:
+            conn.last_error = str(exc)
+            db.commit()
+            log_event(
+                logger,
+                "broker_order_failed",
+                category="orders",
+                event_type="place_order",
+                broker=BrokerKey.zerodha.value,
+                user_id=user.id,
+                instrument_key="fno",
+                status="failed",
+                error=str(exc),
+            )
+            raise
+
+        log_event(
+            logger,
+            "broker_order_placed",
+            category="orders",
+            event_type="place_order",
+            broker=BrokerKey.zerodha.value,
+            user_id=user.id,
+            instrument_key="fno",
+            status="ok",
+            broker_order_id=broker_order_id,
+        )
+        return DerivativeOrderResult(broker_order_id=broker_order_id)

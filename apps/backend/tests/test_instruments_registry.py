@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -17,6 +20,7 @@ from app.models.base import Base
 from app.models.instrument import Instrument
 from app.models.instrument_mapping import InstrumentMapping
 from app.models.user import User
+from app.services.instrument_normalizer import normalize_zerodha_instrument
 from app.services.instrument_registry_service import instrument_registry_service
 from app.services.instrument_sync_service import instrument_sync_service
 
@@ -130,6 +134,28 @@ def test_sync_idempotent_and_search_api(
     assert len(data["items"]) >= 2
     assert all("broker" not in item for item in data["items"])
 
+    # Tokenized query should narrow results (e.g. strike fragment).
+    search_tokens = client.get(
+        "/api/v1/instruments/search",
+        params={"q": "nifty 231"},
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert search_tokens.status_code == 200
+    token_items = search_tokens.json()["items"]
+    assert any(i["instrument_type"] == "OPTION" for i in token_items)
+
+    # Options should be ordered by expiry asc (then strike, then CE/PE).
+    option_order = client.get(
+        "/api/v1/instruments/search",
+        params={"q": "nifty", "instrument_type": "OPTION"},
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert option_order.status_code == 200
+    option_items = option_order.json()["items"]
+    assert len(option_items) >= 1
+    expiries = [str(i.get("expiry")) for i in option_items if i.get("expiry")]
+    assert expiries == sorted(expiries)
+
     eq = client.get(
         "/api/v1/instruments/search",
         params={"q": "infy"},
@@ -219,3 +245,23 @@ def test_sync_endpoint_validates_payload(
         headers={"Authorization": f"Bearer {access}"},
     )
     assert missing.status_code == 400
+
+
+def test_normalize_zerodha_raw_is_jsonable() -> None:
+    normalized = normalize_zerodha_instrument(
+        {
+            "exchange": "NFO",
+            "instrument_token": 123456,
+            "tradingsymbol": "NIFTY26APR2010000CE",
+            "name": "NIFTY",
+            "instrument_type": "CE",
+            "expiry": date(2026, 4, 26),
+            "strike": 20100,
+            "lot_size": 50,
+            "tick_size": 0.05,
+        }
+    )
+    assert normalized is not None
+    assert normalized.raw is not None
+    # Should not raise for non-JSON-native values like `date`.
+    json.dumps(normalized.raw)

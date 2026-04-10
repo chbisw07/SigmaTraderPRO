@@ -271,3 +271,74 @@ This document is the **single milestone-level implementation memory artifact** f
 
 ### Notes / Deviations
 - This milestone intentionally excludes SL/TP/TSL protective controls; they will be layered on with a shared ticket core in later milestones.
+
+## 2026-04-10 — Sprint 4 / S4.2 — F&O order dialog (options + futures)
+### Implemented
+- F&O ticket UI added (options + futures) with preview-first workflow and lots-based quantity derivation
+- New auth-required order endpoints:
+  - `POST /api/v1/orders/fno/preview`
+  - `POST /api/v1/orders/fno`
+- Broker adapters extended to support derivatives dispatch (`place_derivative_order`) for Angel + Zerodha
+- Deterministic Zerodha derivative mapping sync endpoint added for NFO underlyings:
+  - `POST /api/v1/instruments/sync/zerodha-nfo`
+
+### Files / Modules
+- `apps/backend/app/orders/types.py`
+- `apps/backend/app/services/order_service.py`
+- `apps/backend/app/api/v1/orders.py`
+- `apps/backend/app/models/order.py`
+- `apps/backend/alembic/versions/0006_add_orders_lots.py`
+- `apps/backend/app/services/instrument_normalizer.py`
+- `apps/backend/app/services/instrument_sync_service.py`
+- `apps/backend/app/api/v1/instruments.py`
+- `apps/backend/app/schemas/instrument.py`
+- `apps/backend/tests/test_orders_fno.py`
+- `apps/frontend/src/features/orders/FnoOrderDialog.tsx`
+- `apps/frontend/src/lib/api/orders.ts`
+- `apps/frontend/src/lib/api/instruments.ts`
+- `apps/frontend/src/pages/SearchPage.tsx`
+- `apps/frontend/src/test/setup.ts`
+- `apps/frontend/src/test/smoke.test.tsx`
+
+### API / DB / UI Changes
+- API: added F&O preview/create endpoints + Zerodha NFO mapping sync endpoint
+- DB: `orders` table extended with nullable `lots` column (migration `0006_add_orders_lots`)
+- UI: Search workspace now supports opening Stock or F&O tickets via `Trade` actions
+
+### Tests / Quality Gates
+- repo gates: `make check`
+
+### Notes / Deviations
+- SL/TP/TSL protective controls remain deferred (frozen PRD) to keep S4.2 bounded and reliable.
+
+### Follow-up (UX correctness)
+- Added contract-driven ticket prefill modes (`manual` vs `contract`) so Search → `Trade` opens prefilled tickets instead of blank/manual state.
+- Implemented key-based ticket remounting to prevent stale dialog state when switching contracts.
+
+## 2026-04-10 — Sprint 4 / S4.2.1A — Premium hydration + smart strike labeling
+### Implemented
+- Added a small UI-side quote cache (`premiumsByCanonicalId`, `spotsByUnderlying`) used for safe, non-blocking premium hydration
+- F&O ticket now hydrates/prefills premium/limit price when a cached reference premium exists (selected row → cache → last preview)
+- Strike selection is enriched with moneyness labels (`ATM/ITM/OTM`) and color-coded badges (CE/PE semantics tested)
+- Strike discovery list shows moneyness labels for quick scanning; preview shows premium/outlay context when available
+
+### Files / Modules
+- `apps/frontend/src/store/quoteStore.ts`
+- `apps/frontend/src/lib/moneyness.ts`
+- `apps/frontend/src/features/orders/FnoOrderDialog.tsx`
+- `apps/frontend/src/pages/SearchPage.tsx`
+- `apps/frontend/src/test/smoke.test.tsx`
+- `apps/frontend/src/lib/moneyness.test.ts`
+
+### API / DB / UI Changes
+- API: none (no live quote endpoint yet; hydration is cache-driven)
+- DB: none
+- UI: better F&O ticket defaults (premium) + moneyness labels/badges in strike selection and strike discovery
+
+### Tests / Quality Gates
+- frontend lint: `make frontend-lint`
+- frontend tests: `make frontend-test`
+- frontend build: `make frontend-build`
+
+### Notes / Deviations
+- Premium hydration currently uses cached values (selected row context and last preview premium). Live quotes are intentionally deferred until a dedicated backend quote endpoint exists.
