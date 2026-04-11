@@ -359,6 +359,26 @@ beforeAll(() => {
       return jsonResponse({ url: 'https://kite.zerodha.com/connect/login?api_key=K' })
     }
 
+    if (path === '/api/v1/quotes') {
+      const broker = url.searchParams.get('broker') ?? 'angel'
+      const ids = url.searchParams.getAll('canonical_ids')
+      const items = ids.map((id) => {
+        const sym = id.split(':').slice(-1)[0] ?? id
+        const ltp = sym === 'INFY' ? 1499.5 : sym === 'TCS' ? 3788.2 : 100
+        const change = sym === 'INFY' ? 10.2 : sym === 'TCS' ? -5.4 : 0.5
+        const pct = sym === 'INFY' ? 0.68 : sym === 'TCS' ? -0.14 : 0.25
+        return {
+          canonical_id: id,
+          ltp,
+          change,
+          change_percent: pct,
+          previous_close: ltp - change,
+          as_of: '2026-04-09T00:00:00Z',
+        }
+      })
+      return jsonResponse({ broker, items, warning: null })
+    }
+
     if (path === '/api/v1/instruments/search') {
       const q = (url.searchParams.get('q') ?? '').toLowerCase()
       if (!q) return jsonResponse({ items: [] })

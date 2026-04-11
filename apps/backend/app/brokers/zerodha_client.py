@@ -28,6 +28,10 @@ class ZerodhaPositionBookError(RuntimeError):
     pass
 
 
+class ZerodhaQuoteError(RuntimeError):
+    pass
+
+
 def get_login_url(*, api_key: str) -> str:
     kite = KiteConnect(api_key=api_key)
     return str(kite.login_url())
@@ -128,3 +132,24 @@ def fetch_positions(*, api_key: str, access_token: str) -> list[dict]:
     if not isinstance(net, list):
         raise ZerodhaPositionBookError("Zerodha positionbook 'net' must be a list")
     return [row for row in net if isinstance(row, dict)]
+
+
+def fetch_quotes(*, api_key: str, access_token: str, instruments: list[str]) -> dict:
+    """
+    Fetch quote snapshots for a list of instruments.
+
+    `instruments` must contain items like `NSE:INFY`, `NFO:NIFTY24APR24150CE`.
+    """
+    if not instruments:
+        return {}
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(access_token)
+    try:
+        payload = kite.quote(instruments)
+    except Exception as exc:  # noqa: BLE001 - external SDK best-effort
+        msg = str(exc).strip().replace("\n", " ")
+        msg = msg[:240] if msg else "unknown error"
+        raise ZerodhaQuoteError(f"Zerodha quote fetch failed ({msg})") from exc
+    if not isinstance(payload, dict):
+        raise ZerodhaQuoteError("Zerodha quote payload must be a dict")
+    return payload

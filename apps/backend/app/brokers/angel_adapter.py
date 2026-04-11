@@ -9,8 +9,10 @@ from app.brokers.angel_client import (
     AngelOrderBookError,
     AngelOrderError,
     AngelPositionBookError,
+    AngelQuoteError,
     fetch_order_book,
     fetch_position_book,
+    fetch_quotes,
     login_by_password,
     place_order,
 )
@@ -23,12 +25,14 @@ from app.core.time import today_ist
 from app.models.broker_connection import BrokerConnection
 from app.models.user import User
 from app.orders.types import (
+    BrokerQuoteRequest,
     DerivativeOrderRequest,
     DerivativeOrderResult,
     EquityOrderRequest,
     EquityOrderResult,
     ExternalBrokerOrder,
     ExternalBrokerPosition,
+    ExternalBrokerQuote,
     OrderProduct,
     OrderType,
 )
@@ -618,6 +622,137 @@ class AngelAdapter(BrokerAdapter):
                     realized_pnl=realized,
                     unrealized_pnl=unrealized,
                     mtm=mtm,
+                )
+            )
+        return out
+
+    def fetch_quotes(
+        self, db: Session, user: User, *, requests: list[BrokerQuoteRequest]
+    ) -> list[ExternalBrokerQuote]:
+        conn = _get_connection(db, user.id)
+        if not conn or not conn.credentials_enc:
+            raise BrokerNotConfiguredError("Broker is not configured")
+        status = _compute_status(conn)
+        if not status.connected or status.stale:
+            raise BrokerNotConfiguredError("Broker session is not connected")
+        if not conn.session_enc:
+            raise BrokerNotConfiguredError("Broker session is missing")
+
+        try:
+            creds = decrypt_json(
+                conn.credentials_enc, key=settings.broker_encryption_key
+            )
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+        except CryptoError as exc:
+            raise BrokerNotConfiguredError("Broker session decrypt failed") from exc
+
+        api_key = str(creds.get("api_key") or "")
+        jwt_token = str(session.get("jwt_token") or "")
+        if not api_key or not jwt_token:
+            raise BrokerNotConfiguredError("Broker session token missing")
+
+        exchange_tokens: dict[str, list[str]] = {}
+        # Preserve insertion order to help stable UI rendering.
+        ordered: list[BrokerQuoteRequest] = []
+        for req in requests:
+            token = str(req.broker_instrument_id or "").strip()
+            exch = str(req.exchange or "").strip().upper()
+            if not token or not exch:
+                continue
+            exchange_tokens.setdefault(exch, []).append(token)
+            ordered.append(req)
+
+        now = datetime.now(tz=UTC)
+        if not exchange_tokens:
+            return [
+                ExternalBrokerQuote(
+                    broker=BrokerKey.angel.value,
+                    canonical_id=req.canonical_id,
+                    trading_symbol=req.trading_symbol,
+                    last_price=None,
+                    previous_close=None,
+                    change=None,
+                    change_percent=None,
+                    as_of=now,
+                )
+                for req in requests
+            ]
+
+        try:
+            rows = fetch_quotes(
+                api_key=api_key,
+                jwt_token=jwt_token,
+                exchange_tokens=exchange_tokens,
+                mode="FULL",
+            )
+        except AngelQuoteError as exc:
+            raise BrokerError(str(exc)) from exc
+        except Exception:  # noqa: BLE001
+            raise BrokerError("Angel quote fetch failed") from None
+
+        by_token: dict[str, dict] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            token = row.get("symbolToken") or row.get("symboltoken") or row.get("token")
+            if token:
+                by_token[str(token)] = row
+
+        out: list[ExternalBrokerQuote] = []
+        for req in ordered:
+            token = str(req.broker_instrument_id or "").strip()
+            row = by_token.get(token)
+            last_price = None
+            prev_close = None
+            change = None
+            change_pct = None
+            if isinstance(row, dict):
+                try:
+                    if row.get("ltp") is not None:
+                        last_price = float(row.get("ltp"))
+                    elif row.get("last_price") is not None:
+                        last_price = float(row.get("last_price"))
+                except Exception:
+                    last_price = None
+                try:
+                    if row.get("close") is not None:
+                        prev_close = float(row.get("close"))
+                    elif row.get("previousClose") is not None:
+                        prev_close = float(row.get("previousClose"))
+                except Exception:
+                    prev_close = None
+                try:
+                    if row.get("netChange") is not None:
+                        change = float(row.get("netChange"))
+                    elif row.get("netchange") is not None:
+                        change = float(row.get("netchange"))
+                except Exception:
+                    change = None
+                try:
+                    if row.get("percentChange") is not None:
+                        change_pct = float(row.get("percentChange"))
+                    elif row.get("perChange") is not None:
+                        change_pct = float(row.get("perChange"))
+                except Exception:
+                    change_pct = None
+                if change is None and last_price is not None and prev_close:
+                    change = last_price - prev_close
+                if change_pct is None and change is not None and prev_close:
+                    try:
+                        change_pct = (change / prev_close) * 100
+                    except Exception:
+                        change_pct = None
+
+            out.append(
+                ExternalBrokerQuote(
+                    broker=BrokerKey.angel.value,
+                    canonical_id=req.canonical_id,
+                    trading_symbol=req.trading_symbol,
+                    last_price=last_price,
+                    previous_close=prev_close,
+                    change=change,
+                    change_percent=change_pct,
+                    as_of=now,
                 )
             )
         return out

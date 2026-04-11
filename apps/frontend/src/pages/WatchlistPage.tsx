@@ -23,13 +23,13 @@ import * as brokersApi from '@/lib/api/brokers'
 import * as instrumentsApi from '@/lib/api/instruments'
 import * as ordersApi from '@/lib/api/orders'
 import * as positionsApi from '@/lib/api/positions'
+import * as quotesApi from '@/lib/api/quotes'
 import * as watchlistsApi from '@/lib/api/watchlists'
 import { cn } from '@/lib/utils'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 import { useAuthStore } from '@/store/authStore'
 import { useWatchlistLayoutStore } from '@/store/watchlistLayoutStore'
-import { useQuoteStore } from '@/store/quoteStore'
 
 const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
 
@@ -71,6 +71,25 @@ function formatStrikeHuman(strike: number | null): string {
     return Number.isInteger(v) ? String(v) : v.toFixed(2)
   }
   return String(strike)
+}
+
+function formatLtp(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—'
+  return v.toFixed(2)
+}
+
+function formatChangeLine(change: number | null | undefined, pct: number | null | undefined): string {
+  const hasChange = change != null && Number.isFinite(change)
+  const hasPct = pct != null && Number.isFinite(pct)
+  if (!hasChange && !hasPct) return '—'
+
+  const c = hasChange ? Number(change) : null
+  const p = hasPct ? Number(pct) : null
+
+  const sign = c != null && c > 0 ? '+' : ''
+  const cStr = c != null ? `${sign}${c.toFixed(2)}` : '—'
+  const pStr = p != null ? `${p > 0 ? '+' : ''}${p.toFixed(2)}%` : '—'
+  return `${cStr} (${pStr})`
 }
 
 function titleForItem(item: watchlistsApi.WatchlistItemOut) {
@@ -129,9 +148,6 @@ export function WatchlistPage() {
 
   const watchlistMode = useWatchlistLayoutStore((s) => s.mode)
   const setWatchlistMode = useWatchlistLayoutStore((s) => s.setMode)
-
-  const getPremium = useQuoteStore((s) => s.getPremium)
-  const getSpot = useQuoteStore((s) => s.getSpot)
 
   const [activeIdOverride, setActiveIdOverride] = useState<number | null>(() => safeStoredActiveId())
   const [banner, setBanner] = useState<string | null>(null)
@@ -373,13 +389,39 @@ export function WatchlistPage() {
   const brokerState = brokerStatus.data?.find((b) => b.broker === broker) ?? null
   const watchlistTabs = useMemo(() => watchlists.data?.items ?? [], [watchlists.data])
 
+  const canonicalIds = useMemo(() => {
+    const ids: string[] = []
+    for (const item of items) {
+      if (item.canonical_id) ids.push(item.canonical_id)
+    }
+    return ids
+  }, [items])
+
+  const quotes = useQuery({
+    queryKey: ['quotes', broker, canonicalIds.join(',')],
+    queryFn: async () => {
+      if (!accessToken || !canonicalIds.length) return { broker, items: [], warning: null }
+      return quotesApi.getQuotes(accessToken, { broker, canonical_ids: canonicalIds.slice(0, 60) })
+    },
+    enabled: Boolean(accessToken) && canonicalIds.length > 0 && Boolean(brokerState?.connected),
+    refetchInterval: 7_000,
+    retry: false,
+  })
+
+  const quoteByCanonicalId = useMemo(() => {
+    const map = new Map<string, quotesApi.QuoteOut>()
+    for (const q of quotes.data?.items ?? []) {
+      map.set(q.canonical_id, q)
+    }
+    return map
+  }, [quotes.data])
+
   const [newName, setNewName] = useState('')
   const [makeDefault, setMakeDefault] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingName, setEditingName] = useState('')
 
   const isCompact = watchlistMode === 'compact'
-  const isWide = watchlistMode === 'wide'
 
   const filteredItems = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -607,9 +649,12 @@ export function WatchlistPage() {
                 const canonicalId = item.canonical_id
                 const hasPos = canonicalId ? positionSet.has(canonicalId) : false
                 const hasOpenOrder = canonicalId ? openOrderSet.has(canonicalId) : false
-                const u = (inst?.underlying ?? item.underlying ?? inst?.symbol_root ?? '').trim().toUpperCase()
-                const spot = u ? getSpot(u) : null
-                const ltp = canonicalId ? getPremium(canonicalId) : null
+                const q = canonicalId ? quoteByCanonicalId.get(canonicalId) : null
+                const ltp = q?.ltp ?? null
+                const chg = q?.change ?? null
+                const chgPct = q?.change_percent ?? null
+                const changeUp = (chgPct ?? chg ?? 0) > 0
+                const changeDown = (chgPct ?? chg ?? 0) < 0
 
                 return (
                   <div
@@ -649,50 +694,53 @@ export function WatchlistPage() {
                       ) : null}
                     </div>
 
-                    {isWide ? (
-                      <div className="hidden sm:flex w-20 shrink-0 flex-col items-end">
-                        <div className="font-medium tabular-nums">
-                          {ltp != null ? ltp.toFixed(2) : '—'}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground tabular-nums">
-                          {spot != null ? `Spot ${spot.toFixed(0)}` : '—'}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <div className="shrink-0">
-                      <div className="relative flex items-center gap-1">
+                    <div className="shrink-0 flex items-center gap-2">
+                      <div
+                        className={cn(
+                          'relative flex items-center gap-1 opacity-0 transition-opacity',
+                          'group-hover:opacity-100 group-focus-within:opacity-100',
+                        )}
+                      >
                         <Button
                           type="button"
-                          size="sm"
-                          variant="outline"
-                          className="text-emerald-700 dark:text-emerald-300"
+                          size="icon"
+                          variant="secondary"
+                          className={cn(
+                            'h-7 w-7 text-emerald-800 dark:text-emerald-200',
+                            'bg-emerald-500/10 hover:bg-emerald-500/15',
+                          )}
                           onClick={() => openTrade(item, 'BUY')}
                           disabled={!item.instrument && !item.underlying}
                           aria-label="Buy"
+                          title="Buy"
                         >
-                          {isCompact ? 'B' : 'Buy'}
+                          B
                         </Button>
                         <Button
                           type="button"
-                          size="sm"
-                          variant="outline"
-                          className="text-red-700 dark:text-red-300"
+                          size="icon"
+                          variant="secondary"
+                          className={cn(
+                            'h-7 w-7 text-red-800 dark:text-red-200',
+                            'bg-red-500/10 hover:bg-red-500/15',
+                          )}
                           onClick={() => openTrade(item, 'SELL')}
                           disabled={!item.instrument && !item.underlying}
                           aria-label="Sell"
+                          title="Sell"
                         >
-                          {isCompact ? 'S' : 'Sell'}
+                          S
                         </Button>
                         <Button
                           type="button"
                           size="icon"
                           variant="ghost"
                           aria-label="More"
+                          title="More"
                           onClick={() => setRowMenuOpenId((v) => (v === item.id ? null : item.id))}
-                          className={cn(isCompact ? 'h-8 w-8' : 'h-9 w-9')}
+                          className="h-7 w-7"
                         >
-                          <MoreHorizontal />
+                          <MoreHorizontal className="h-4 w-4" />
                         </Button>
 
                         {rowMenuOpenId === item.id ? (
@@ -734,6 +782,22 @@ export function WatchlistPage() {
                               <Trash2 className="h-4 w-4" />
                               Remove
                             </button>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className={cn('w-[92px] text-right', isCompact && 'w-[70px]')}>
+                        <div className="font-medium tabular-nums">{formatLtp(ltp)}</div>
+                        {!isCompact ? (
+                          <div
+                            className={cn(
+                              'text-[11px] tabular-nums',
+                              changeUp && 'text-emerald-600',
+                              changeDown && 'text-red-600',
+                              !changeUp && !changeDown && 'text-muted-foreground',
+                            )}
+                          >
+                            {formatChangeLine(chg, chgPct)}
                           </div>
                         ) : null}
                       </div>

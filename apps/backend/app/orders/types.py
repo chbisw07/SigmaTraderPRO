@@ -156,3 +156,35 @@ class ExternalBrokerPosition:
     realized_pnl: float | None
     unrealized_pnl: float | None
     mtm: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerQuoteRequest:
+    """
+    Safe, canonical-first quote request routed via a broker adapter.
+
+    Important: must not include secrets/tokens.
+    """
+
+    canonical_id: str
+    exchange: str
+    trading_symbol: str | None = None
+    broker_instrument_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalBrokerQuote:
+    """
+    Normalized broker quote row for Watchlist/terminal display.
+
+    Important: must not contain secrets/tokens. Broker payload remains internal.
+    """
+
+    broker: str
+    canonical_id: str
+    trading_symbol: str | None
+    last_price: float | None
+    previous_close: float | None
+    change: float | None
+    change_percent: float | None
+    as_of: datetime | None

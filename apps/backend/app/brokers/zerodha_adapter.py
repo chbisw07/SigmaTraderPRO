@@ -11,9 +11,11 @@ from app.brokers.zerodha_client import (
     ZerodhaOrderBookError,
     ZerodhaOrderError,
     ZerodhaPositionBookError,
+    ZerodhaQuoteError,
     exchange_request_token,
     fetch_orders,
     fetch_positions,
+    fetch_quotes,
     get_login_url,
     place_order,
 )
@@ -24,12 +26,14 @@ from app.core.time import today_ist
 from app.models.broker_connection import BrokerConnection
 from app.models.user import User
 from app.orders.types import (
+    BrokerQuoteRequest,
     DerivativeOrderRequest,
     DerivativeOrderResult,
     EquityOrderRequest,
     EquityOrderResult,
     ExternalBrokerOrder,
     ExternalBrokerPosition,
+    ExternalBrokerQuote,
     OrderProduct,
     OrderType,
 )
@@ -614,6 +618,121 @@ class ZerodhaAdapter(BrokerAdapter):
                     realized_pnl=realized,
                     unrealized_pnl=unrealized,
                     mtm=mtm,
+                )
+            )
+        return out
+
+    def fetch_quotes(
+        self, db: Session, user: User, *, requests: list[BrokerQuoteRequest]
+    ) -> list[ExternalBrokerQuote]:
+        conn = _get_connection(db, user.id)
+        if not conn or not conn.credentials_enc:
+            raise BrokerNotConfiguredError("Broker is not configured")
+        status = _compute_status(conn)
+        if not status.connected or status.stale:
+            raise BrokerNotConfiguredError("Broker session is not connected")
+        if not conn.session_enc:
+            raise BrokerNotConfiguredError("Broker session is missing")
+
+        try:
+            creds = decrypt_json(
+                conn.credentials_enc, key=settings.broker_encryption_key
+            )
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+        except CryptoError as exc:
+            raise BrokerNotConfiguredError("Broker session decrypt failed") from exc
+
+        api_key = str(creds.get("api_key") or "")
+        access_token = str(session.get("access_token") or "")
+        if not api_key or not access_token:
+            raise BrokerNotConfiguredError("Broker session token missing")
+
+        def _instrument_str(req: BrokerQuoteRequest) -> str | None:
+            exchange = str(req.exchange or "").strip().upper()
+            sym = str(req.trading_symbol or "").strip().upper()
+            if not exchange or not sym:
+                return None
+            return f"{exchange}:{sym}"
+
+        instrument_strings: list[str] = []
+        by_str: dict[str, BrokerQuoteRequest] = {}
+        for req in requests:
+            s = _instrument_str(req)
+            if not s:
+                continue
+            instrument_strings.append(s)
+            by_str[s] = req
+
+        now = datetime.now(tz=UTC)
+        if not instrument_strings:
+            return [
+                ExternalBrokerQuote(
+                    broker=BrokerKey.zerodha.value,
+                    canonical_id=req.canonical_id,
+                    trading_symbol=req.trading_symbol,
+                    last_price=None,
+                    previous_close=None,
+                    change=None,
+                    change_percent=None,
+                    as_of=now,
+                )
+                for req in requests
+            ]
+
+        try:
+            payload = fetch_quotes(
+                api_key=api_key,
+                access_token=access_token,
+                instruments=instrument_strings,
+            )
+        except ZerodhaQuoteError as exc:
+            raise BrokerError(str(exc)) from exc
+
+        out: list[ExternalBrokerQuote] = []
+        for s in instrument_strings:
+            req = by_str.get(s)
+            if not req:
+                continue
+            row = payload.get(s) if isinstance(payload, dict) else None
+            last_price = None
+            prev_close = None
+            change = None
+            change_pct = None
+            if isinstance(row, dict):
+                try:
+                    if row.get("last_price") is not None:
+                        last_price = float(row.get("last_price"))
+                except Exception:
+                    last_price = None
+                ohlc = row.get("ohlc") if isinstance(row.get("ohlc"), dict) else {}
+                try:
+                    if ohlc and ohlc.get("close") is not None:
+                        prev_close = float(ohlc.get("close"))
+                except Exception:
+                    prev_close = None
+                try:
+                    if row.get("net_change") is not None:
+                        change = float(row.get("net_change"))
+                except Exception:
+                    change = None
+                if change is None and last_price is not None and prev_close:
+                    change = last_price - prev_close
+                if change is not None and prev_close:
+                    try:
+                        change_pct = (change / prev_close) * 100
+                    except Exception:
+                        change_pct = None
+
+            out.append(
+                ExternalBrokerQuote(
+                    broker=BrokerKey.zerodha.value,
+                    canonical_id=req.canonical_id,
+                    trading_symbol=req.trading_symbol,
+                    last_price=last_price,
+                    previous_close=prev_close,
+                    change=change,
+                    change_percent=change_pct,
+                    as_of=now,
                 )
             )
         return out

@@ -199,3 +199,8 @@
 - Optional: add bulk “add from Search” to a chosen watchlist (menu) and/or batch reorder (drag handle)
 - Optional: lightweight row indicators from Orders/Positions (counts + status) without introducing live quotes
 - Deferred: live quotes, TradingView-bound watchlists, scanner-generated lists, AI annotations (per S4.2.2 non-goals)
+
+### S4.2.2A Watchlist quote snapshot (follow-up)
+- Added a bounded broker-quote snapshot API (`GET /api/v1/quotes`) used by the persistent Watchlist to show LTP + change/% change when broker is connected.
+- Quote fetching is canonical-first (requested by `canonical_id`) and resolves broker tokens internally; no broker symbols are exposed as the primary UI model.
+- Quotes are cached in Redis with short TTL (lean market data philosophy); UI degrades gracefully to `—` when unavailable.
