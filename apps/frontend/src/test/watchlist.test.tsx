@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { RouterProvider } from 'react-router-dom'
 
 import { Providers } from '@/app/Providers'
@@ -46,13 +46,15 @@ test('can create a watchlist from watchlist page', async () => {
 
   expect(await screen.findByRole('heading', { name: 'Watchlist' })).toBeInTheDocument()
 
-  fireEvent.change(screen.getByPlaceholderText('New watchlist name'), {
+  fireEvent.click(screen.getByRole('button', { name: 'Watchlist settings' }))
+
+  fireEvent.change(await screen.findByPlaceholderText('New watchlist name'), {
     target: { value: 'FNO' },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Create' }))
 
   await waitFor(() => {
-    expect(screen.getByText('FNO')).toBeInTheDocument()
+    expect(screen.getAllByText('FNO').length).toBeGreaterThan(0)
   })
 })
 
@@ -68,17 +70,17 @@ test('search can add an instrument to default watchlist and watchlist shows quic
   expect(await screen.findByText('INFY')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
-  await router.navigate('/watchlist')
+  await act(async () => {
+    await router.navigate('/watchlist')
+  })
 
   expect(await screen.findByRole('heading', { name: 'Watchlist' })).toBeInTheDocument()
 
-  // One row should exist with quick actions.
+  await screen.findByText('INFY')
   const table = screen.getByRole('table')
-  expect(within(table).getByText('INFY')).toBeInTheDocument()
   expect(within(table).getByRole('button', { name: 'Buy' })).toBeInTheDocument()
   expect(within(table).getByRole('button', { name: 'Sell' })).toBeInTheDocument()
-  expect(within(table).getByRole('button', { name: 'Orders' })).toBeInTheDocument()
-  expect(within(table).getByRole('button', { name: 'Positions' })).toBeInTheDocument()
-  expect(within(table).getByRole('button', { name: 'Remove' })).toBeInTheDocument()
+  expect(within(table).getByRole('button', { name: 'View orders' })).toBeInTheDocument()
+  expect(within(table).getByRole('button', { name: 'View positions' })).toBeInTheDocument()
+  expect(within(table).getByRole('button', { name: 'Remove from watchlist' })).toBeInTheDocument()
 })
-

@@ -176,8 +176,8 @@
   - `watchlists` + `watchlist_items` tables with ordered rows (`position`) and default list support
   - CRUD + reorder APIs under `GET/POST/PATCH/DELETE /api/v1/watchlists` and items subroutes
 - Added Watchlist workspace page (`/watchlist`) as a practical daily working set:
-  - multiple lists, rename/delete, set default
-  - add/remove items + simple up/down reordering
+  - broker-inspired card/workspace layout (tabs + embedded add/search + compact rows)
+  - multiple watchlists as tabs; management is secondary via a settings dialog (rename/delete/set default/create)
   - supports canonical instruments plus “underlying-only” rows for F&O-capable underlyings
 - Integrated Search → Watchlist handoff:
   - Search results include `Add` action that adds to active watchlist when available, otherwise default watchlist
