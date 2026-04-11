@@ -39,6 +39,7 @@ def readiness() -> JSONResponse:
                 "orders",
                 "positions",
                 "system_events",
+                "webhook_ingestions",
             ]
             missing: list[str] = []
             for name in required:

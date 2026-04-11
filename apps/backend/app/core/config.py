@@ -81,6 +81,14 @@ class Settings(BaseSettings):
         default=True, validation_alias="ORDERS_DISPATCH_ENABLED"
     )
 
+    # TradingView webhook ingestion (S5.1)
+    tradingview_route_token: str | None = Field(
+        default=None, validation_alias="TRADINGVIEW_ROUTE_TOKEN"
+    )
+    tradingview_supported_schema_versions: str = Field(
+        default="1", validation_alias="TRADINGVIEW_SUPPORTED_SCHEMA_VERSIONS"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

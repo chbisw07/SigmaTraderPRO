@@ -380,3 +380,47 @@ This document is the **single milestone-level implementation memory artifact** f
 - API: added `GET/POST /api/v1/system-events` surfaces for System Events workspace.
 - DB: added `system_events` table (migration `0011_system_events`) and `orders` dispatch fields (migration `0010_dispatch_gating_fields`).
 - UI: System Events workspace surfaces dispatch lifecycle and correlation IDs for operational traceability.
+
+## 2026-04-12 — Sprint 5 / S5.1 — TradingView webhook contract (Acceptance complete)
+### Implemented
+- Added canonical TradingView webhook ingestion endpoint: `POST /webhook/tradingview`
+- Enforced route token validation via `TRADINGVIEW_ROUTE_TOKEN` (payload field `route_token`)
+- Enforced explicit schema version checks via `schema_version` + `TRADINGVIEW_SUPPORTED_SCHEMA_VERSIONS`
+- Implemented deterministic idempotency:
+  - uses `idempotency_key|alert_id|order_id|event_id|id` when present, otherwise `sha256(redacted_payload)`
+  - duplicate requests return `duplicate_ignored=true` and do not create additional ingestion rows
+- Implemented canonical payload normalization into a typed internal contract (`TradingViewNormalizedPayload`)
+- Added durable ingestion persistence (`webhook_ingestions`) with redacted raw payload snapshot and normalized payload JSON
+- Added operator-visible System Events under category `webhook_tradingview` for: received / rejected / duplicate ignored / accepted
+
+### Validated lifecycle example (same correlation ID)
+- `INFO | webhook_tradingview | TradingView webhook received | <correlation_id>`
+- `INFO | webhook_tradingview | TradingView webhook accepted | <correlation_id>`
+- Response returns `correlation_id=<correlation_id>`, `idempotency_key=tv:1:<alert_id>`, `ingestion_id=<id>`
+- DB row created in `webhook_ingestions` with matching `correlation_id` + `idempotency_key`
+
+### Files / Modules
+- `apps/backend/app/api/webhooks.py`
+- `apps/backend/app/services/webhook_ingestion_service.py`
+- `apps/backend/app/services/tradingview_webhook_service.py`
+- `apps/backend/app/schemas/webhook_tradingview.py`
+- `apps/backend/app/models/webhook_ingestion.py`
+- `apps/backend/alembic/versions/0012_webhook_ingestions.py`
+
+### API / DB / UI Changes
+- API: added `POST /webhook/tradingview` and structured response contract (`ok/status/reason_code/message/correlation_id/idempotency_key/ingestion_id`).
+- DB: added `webhook_ingestions` table (migration `0012_webhook_ingestions`) for durable webhook inbox + idempotency uniqueness.
+- UI: no changes; events appear in the existing System Events workspace via `webhook_tradingview` category.
+
+### Tests / Quality Gates
+- ruff: `make backend-lint`
+- tests: `make backend-test`
+- smoke checks: `make backend-migrate`
+
+### Notes / Deviations
+- Raw payload snapshot is redacted (`route_token`/`token`/`secret` → `"***"`) before persistence to avoid secret leakage.
+- Rejected payload idempotency uses reason-specific namespaces to avoid cross-reason collisions (keeps rejection persistence deterministic).
+
+### Follow-up TODOs
+- Implement “accepted webhook → user/strategy routing → order intent creation” (later sprint; intentionally out of S5.1 scope).
+- Add deployment-facing hardening (rate limiting / IP allowlist) only if/when needed in production rollout.
