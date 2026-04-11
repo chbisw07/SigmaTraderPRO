@@ -182,6 +182,7 @@
 - Refined the persistent Watchlist workspace into a terminal-style component:
   - `compact` / `standard` / `wide` modes (mode affects both width and information density)
   - bounded resize within app-controlled caps to keep the shell stable
+  - broker-style refinements: hover/focus row actions, embedded add+filter search, and compact filter/sort menu
 - Integrated Search → Watchlist handoff:
   - Search results include `Add` action that adds to active watchlist when available, otherwise default watchlist
 - Added row quick actions (reuses existing dialogs/routes; no duplicate ticket logic):

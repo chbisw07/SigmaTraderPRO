@@ -21,6 +21,11 @@ beforeEach(() => {
   } catch {
     // ignore
   }
+  try {
+    window.localStorage.removeItem('sigmatraderpro.watchlist.view')
+  } catch {
+    // ignore
+  }
   useAuthStore.setState({
     status: 'authenticated',
     accessToken: 'ACCESS_TOKEN',
@@ -79,11 +84,17 @@ test('search can add an instrument to default watchlist and watchlist shows quic
 
   expect(await screen.findByRole('heading', { name: 'Watchlist' })).toBeInTheDocument()
 
-  const table = await screen.findByRole('table')
-  await within(table).findByText('INFY')
-  expect(within(table).getByRole('button', { name: 'Buy' })).toBeInTheDocument()
-  expect(within(table).getByRole('button', { name: 'Sell' })).toBeInTheDocument()
-  expect(within(table).getByRole('button', { name: 'View orders' })).toBeInTheDocument()
-  expect(within(table).getByRole('button', { name: 'View positions' })).toBeInTheDocument()
-  expect(within(table).getByRole('button', { name: 'Remove from watchlist' })).toBeInTheDocument()
+  const list = await screen.findByTestId('watchlist-items')
+  const infy = await within(list).findByText('INFY')
+  const row = infy.closest('[data-testid^="watchlist-row-"]')
+  expect(row).toBeTruthy()
+  if (!row) return
+
+  fireEvent.mouseEnter(row)
+
+  expect(within(row).getByRole('button', { name: 'Buy' })).toBeInTheDocument()
+  expect(within(row).getByRole('button', { name: 'Sell' })).toBeInTheDocument()
+  expect(within(row).getByRole('button', { name: 'View orders' })).toBeInTheDocument()
+  expect(within(row).getByRole('button', { name: 'View positions' })).toBeInTheDocument()
+  expect(within(row).getByRole('button', { name: 'Remove from watchlist' })).toBeInTheDocument()
 })

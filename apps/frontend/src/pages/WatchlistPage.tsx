@@ -1,10 +1,12 @@
-import { type ComponentProps, useEffect, useMemo, useState } from 'react'
+import { type ComponentProps, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
   ArrowDown,
   ArrowUp,
   Briefcase,
+  Filter,
+  MoreHorizontal,
   Maximize2,
   Minimize2,
   Pencil,
@@ -30,6 +32,8 @@ import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 import { useAuthStore } from '@/store/authStore'
 import { useWatchlistLayoutStore } from '@/store/watchlistLayoutStore'
+import { useWatchlistViewStore } from '@/store/watchlistViewStore'
+import { useQuoteStore } from '@/store/quoteStore'
 
 const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
 
@@ -100,6 +104,18 @@ function compactTitleForItem(item: watchlistsApi.WatchlistItemOut) {
   return inst.display_symbol
 }
 
+function isDerivativeType(t: string | null) {
+  return t === 'OPTION' || t === 'FUTURE'
+}
+
+function exchangeGroup(exchange: string | null): 'nse' | 'bse' | null {
+  if (!exchange) return null
+  const x = exchange.toUpperCase()
+  if (x.startsWith('BSE')) return 'bse'
+  if (x.startsWith('NSE')) return 'nse'
+  return null
+}
+
 function safeStoredActiveId(): number | null {
   if (typeof window === 'undefined') return null
   try {
@@ -130,9 +146,22 @@ export function WatchlistPage() {
   const watchlistMode = useWatchlistLayoutStore((s) => s.mode)
   const setWatchlistMode = useWatchlistLayoutStore((s) => s.setMode)
 
+  const filterType = useWatchlistViewStore((s) => s.filterType)
+  const filterExchange = useWatchlistViewStore((s) => s.filterExchange)
+  const sort = useWatchlistViewStore((s) => s.sort)
+  const setFilterType = useWatchlistViewStore((s) => s.setFilterType)
+  const setFilterExchange = useWatchlistViewStore((s) => s.setFilterExchange)
+  const setSort = useWatchlistViewStore((s) => s.setSort)
+  const resetView = useWatchlistViewStore((s) => s.reset)
+
+  const getPremium = useQuoteStore((s) => s.getPremium)
+  const getSpot = useQuoteStore((s) => s.getSpot)
+
   const [activeIdOverride, setActiveIdOverride] = useState<number | null>(() => safeStoredActiveId())
   const [banner, setBanner] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [activeRowId, setActiveRowId] = useState<number | null>(null)
+  const [controlsOpen, setControlsOpen] = useState(false)
 
   const selectedBroker = (user?.last_used_broker as BrokerKey | null) ?? null
   const broker = selectedBroker ?? 'angel'
@@ -302,14 +331,16 @@ export function WatchlistPage() {
     return set
   }, [orders.data])
 
-  const [addQ, setAddQ] = useState('')
+  const [q, setQ] = useState('')
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const [searchFocused, setSearchFocused] = useState(false)
   const addSearch = useQuery({
-    queryKey: ['watchlist', 'add', addQ],
+    queryKey: ['watchlist', 'add', q],
     queryFn: async () => {
       if (!accessToken) return { items: [] }
-      return instrumentsApi.searchInstruments(accessToken, { q: addQ, limit: 20 })
+      return instrumentsApi.searchInstruments(accessToken, { q, limit: 20 })
     },
-    enabled: Boolean(accessToken) && addQ.trim().length > 0,
+    enabled: Boolean(accessToken) && q.trim().length > 0,
   })
 
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
@@ -373,9 +404,9 @@ export function WatchlistPage() {
     setFnoDialogOpen(true)
   }
 
-  const items = watchlistItems.data?.items ?? []
+  const items = useMemo(() => watchlistItems.data?.items ?? [], [watchlistItems.data])
   const brokerState = brokerStatus.data?.find((b) => b.broker === broker) ?? null
-  const watchlistTabs = watchlists.data?.items ?? []
+  const watchlistTabs = useMemo(() => watchlists.data?.items ?? [], [watchlists.data])
 
   const [newName, setNewName] = useState('')
   const [makeDefault, setMakeDefault] = useState(false)
@@ -384,6 +415,59 @@ export function WatchlistPage() {
 
   const isCompact = watchlistMode === 'compact'
   const isWide = watchlistMode === 'wide'
+  const canReorder =
+    isWide &&
+    sort === 'manual' &&
+    filterType === 'all' &&
+    filterExchange === 'all' &&
+    q.trim().length === 0
+
+  const filteredItems = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+
+    const byText = (item: watchlistsApi.WatchlistItemOut) => {
+      if (!needle) return true
+      const title = titleForItem(item).toLowerCase()
+      const canon = (item.canonical_id ?? item.symbol_key).toLowerCase()
+      const under = (item.underlying ?? '').toLowerCase()
+      return title.includes(needle) || canon.includes(needle) || under.includes(needle)
+    }
+
+    const byType = (item: watchlistsApi.WatchlistItemOut) => {
+      if (filterType === 'all') return true
+      const instType = item.instrument?.instrument_type ?? item.instrument_type
+      if (!instType) return filterType === 'derivatives'
+      if (filterType === 'equity') return instType === 'EQUITY' || instType === 'ETF'
+      if (filterType === 'index') return instType === 'INDEX'
+      if (filterType === 'derivatives') return isDerivativeType(instType) || Boolean(item.underlying)
+      return true
+    }
+
+    const byExchange = (item: watchlistsApi.WatchlistItemOut) => {
+      if (filterExchange === 'all') return true
+      const g = exchangeGroup(item.instrument?.exchange ?? item.exchange)
+      return g === filterExchange
+    }
+
+    const filtered = items.filter((i) => byText(i) && byType(i) && byExchange(i))
+
+    if (sort === 'alpha') {
+      return [...filtered].sort((a, b) => titleForItem(a).localeCompare(titleForItem(b)))
+    }
+    return filtered
+  }, [filterExchange, filterType, items, q, sort])
+
+  useEffect(() => {
+    if (!controlsOpen) return
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      if (target.closest('[data-watchlist-controls]')) return
+      setControlsOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [controlsOpen])
 
   return (
     <div className={cn('space-y-6', isCompact && 'space-y-3')}>
@@ -400,18 +484,18 @@ export function WatchlistPage() {
 
       <Card>
         <CardHeader className={cn('space-y-4', isCompact && 'space-y-3')}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
               <CardTitle className={cn('text-base', isCompact && 'text-sm')}>Watchlist</CardTitle>
               {!isCompact ? (
                 <div className="text-xs text-muted-foreground">
-                  Broker-style working set with embedded search and quick trade actions.
+                  Compact working set. Rows are optimized for fast Buy/Sell; quotes will layer in later.
                 </div>
               ) : null}
             </div>
+
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 text-sm">
-                {!isCompact ? <span className="text-xs text-muted-foreground">Broker</span> : null}
                 <select
                   value={broker}
                   onChange={(e) => void updateLastUsedBroker(e.target.value)}
@@ -420,6 +504,7 @@ export function WatchlistPage() {
                     'focus-visible:ring-2 focus-visible:ring-ring',
                     isCompact && 'h-8 text-xs',
                   )}
+                  aria-label="Broker"
                 >
                   {BROKER_OPTIONS.map((b) => (
                     <option key={b.key} value={b.key}>
@@ -427,10 +512,16 @@ export function WatchlistPage() {
                     </option>
                   ))}
                 </select>
-                <span className={cn('ml-2 text-xs', brokerState?.connected ? 'text-emerald-600' : 'text-muted-foreground')}>
+                <span
+                  className={cn(
+                    'text-[11px]',
+                    brokerState?.connected ? 'text-emerald-600' : 'text-muted-foreground',
+                  )}
+                >
                   {brokerState?.connected ? 'Connected' : 'Not connected'}
                 </span>
               </div>
+
               <div className="flex items-center gap-1 rounded-md border bg-background p-1">
                 <Button
                   type="button"
@@ -466,10 +557,87 @@ export function WatchlistPage() {
                   <Maximize2 />
                 </Button>
               </div>
-              <Button type="button" size="icon" variant="outline" aria-label="Watchlist settings" onClick={() => setSettingsOpen(true)}>
+
+              <div className="relative" data-watchlist-controls>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  aria-label="Watchlist filters"
+                  onClick={() => setControlsOpen((v) => !v)}
+                >
+                  <Filter />
+                </Button>
+                {controlsOpen ? (
+                  <div className="absolute right-0 top-[44px] z-20 w-64 rounded-md border bg-card p-3 shadow-sm">
+                    <div className="space-y-3 text-sm">
+                      <div className="font-medium">View</div>
+                      <div className="space-y-2">
+                        <label className="block text-xs text-muted-foreground">Type</label>
+                        <select
+                          value={filterType}
+                          onChange={(e) => setFilterType(e.target.value as typeof filterType)}
+                          className="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <option value="all">All</option>
+                          <option value="equity">Equity</option>
+                          <option value="index">Index</option>
+                          <option value="derivatives">Derivatives</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-xs text-muted-foreground">Exchange</label>
+                        <select
+                          value={filterExchange}
+                          onChange={(e) => setFilterExchange(e.target.value as typeof filterExchange)}
+                          className="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <option value="all">All</option>
+                          <option value="nse">NSE</option>
+                          <option value="bse">BSE</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-xs text-muted-foreground">Sort</label>
+                        <select
+                          value={sort}
+                          onChange={(e) => setSort(e.target.value as typeof sort)}
+                          className="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <option value="manual">Watchlist order</option>
+                          <option value="alpha">Alphabetical</option>
+                        </select>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-2">
+                        <Button type="button" size="sm" variant="outline" onClick={resetView}>
+                          Reset
+                        </Button>
+                        <Button type="button" size="sm" onClick={() => setControlsOpen(false)}>
+                          Done
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                aria-label="Watchlist settings"
+                onClick={() => setSettingsOpen(true)}
+              >
                 <Settings />
               </Button>
-              <Button type="button" size="icon" variant="outline" aria-label="Refresh watchlist" onClick={() => void watchlistItems.refetch()} disabled={!activeId}>
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                aria-label="Refresh watchlist"
+                onClick={() => void watchlistItems.refetch()}
+                disabled={!activeId}
+              >
                 <span className="text-xs font-semibold">↻</span>
               </Button>
             </div>
@@ -506,12 +674,19 @@ export function WatchlistPage() {
           <div className="relative">
             <div className="flex items-center gap-2">
               <Input
-                value={addQ}
-                onChange={(e) => setAddQ(e.target.value)}
+                ref={(el) => {
+                  inputRef.current = el
+                }}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => {
+                  window.setTimeout(() => setSearchFocused(false), 120)
+                }}
                 placeholder={
                   isCompact
-                    ? 'Search to add…'
-                    : 'Search instruments to add… (e.g. INFY, NIFTY, NIFTY 24150 CE)'
+                    ? 'Search…'
+                    : 'Search watchlist / add instruments… (e.g. INFY, NIFTY, NIFTY 24150 CE)'
                 }
                 aria-label="Watchlist add search"
               />
@@ -521,12 +696,13 @@ export function WatchlistPage() {
                 size="sm"
                 onClick={() => {
                   if (!activeId) return
-                  const u = addQ.trim().toUpperCase()
+                  const u = q.trim().toUpperCase()
                   if (!u) return
                   void addUnderlying.mutate({ watchlistId: activeId, underlying: u })
-                  setAddQ('')
+                  setQ('')
+                  inputRef.current?.focus()
                 }}
-                disabled={!activeId || !addQ.trim()}
+                disabled={!activeId || !q.trim()}
                 className={cn(isCompact && 'hidden')}
               >
                 Add underlying
@@ -539,20 +715,24 @@ export function WatchlistPage() {
                   aria-label="Add underlying"
                   onClick={() => {
                     if (!activeId) return
-                    const u = addQ.trim().toUpperCase()
+                    const u = q.trim().toUpperCase()
                     if (!u) return
                     void addUnderlying.mutate({ watchlistId: activeId, underlying: u })
-                    setAddQ('')
+                    setQ('')
+                    inputRef.current?.focus()
                   }}
-                  disabled={!activeId || !addQ.trim()}
+                  disabled={!activeId || !q.trim()}
                 >
                   <Plus />
                 </Button>
               ) : null}
             </div>
 
-            {addQ.trim().length > 0 ? (
-              <div className="absolute left-0 right-0 top-[46px] z-10 max-h-[320px] overflow-auto rounded-md border bg-card shadow-sm">
+            {searchFocused && q.trim().length > 0 ? (
+              <div
+                className="absolute left-0 right-0 top-[46px] z-10 max-h-[320px] overflow-auto rounded-md border bg-card shadow-sm"
+                onMouseDown={(e) => e.preventDefault()}
+              >
                 {addSearch.isFetching ? (
                   <div className="px-3 py-3 text-sm text-muted-foreground">Searching…</div>
                 ) : null}
@@ -564,7 +744,8 @@ export function WatchlistPage() {
                     onClick={() => {
                       if (!activeId) return
                       void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id })
-                      setAddQ('')
+                      setQ('')
+                      inputRef.current?.focus()
                     }}
                   >
                     <div className="min-w-0">
@@ -603,149 +784,217 @@ export function WatchlistPage() {
                 </Button>
               </div>
             </div>
+          ) : !filteredItems.length ? (
+            <div className="rounded-md border bg-muted/20 p-4 text-sm">
+              <div className="font-medium">No matches</div>
+              <div className="mt-1 text-muted-foreground">
+                Adjust filters or clear the search box to see all items.
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setQ('')}>
+                  Clear search
+                </Button>
+                <Button type="button" variant="outline" onClick={resetView}>
+                  Reset filters
+                </Button>
+              </div>
+            </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-xs text-muted-foreground">
-                  <tr className="border-b">
-                    <th className="px-2 py-2 text-left">Instrument</th>
-                    <th className="px-2 py-2 text-left">Type</th>
-                    <th className="px-2 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {items.map((item, idx) => {
-                    const canonicalId = item.canonical_id
-                    const hasPos = canonicalId ? positionSet.has(canonicalId) : false
-                    const hasOpenOrder = canonicalId ? openOrderSet.has(canonicalId) : false
-                    return (
-                      <tr key={item.id} className="hover:bg-accent/20">
-                        <td className={cn('px-2 py-2', isCompact && 'py-1.5')}>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="font-medium">
-                              {isCompact ? compactTitleForItem(item) : titleForItem(item)}
-                            </div>
-                            {!isCompact && hasPos ? <Badge variant="outline">POS</Badge> : null}
-                            {!isCompact && hasOpenOrder ? <Badge variant="outline">ORD</Badge> : null}
-                            {!isCompact && item.exchange ? <Badge variant="outline">{item.exchange}</Badge> : null}
-                            {isCompact && (hasPos || hasOpenOrder) ? (
-                              <span className="text-[11px] text-muted-foreground">
-                                {hasPos ? '• POS' : ''} {hasOpenOrder ? '• ORD' : ''}
-                              </span>
+            <div data-testid="watchlist-items" className="divide-y rounded-md border bg-card">
+              {filteredItems.map((item, idx) => {
+                const inst = item.instrument
+                const canonicalId = item.canonical_id
+                const hasPos = canonicalId ? positionSet.has(canonicalId) : false
+                const hasOpenOrder = canonicalId ? openOrderSet.has(canonicalId) : false
+                const ltp = canonicalId ? getPremium(canonicalId) : null
+                const u = (inst?.underlying ?? item.underlying ?? inst?.symbol_root ?? '').trim().toUpperCase()
+                const spot = u ? getSpot(u) : null
+                const showActions = activeRowId === item.id || isWide
+
+                return (
+                  <div
+                    key={item.id}
+                    data-testid={`watchlist-row-${item.id}`}
+                    className={cn(
+                      'group flex items-center justify-between gap-3 px-3 py-2',
+                      'hover:bg-accent/20',
+                      isCompact && 'py-1.5',
+                    )}
+                    tabIndex={0}
+                    onMouseEnter={() => setActiveRowId(item.id)}
+                    onMouseLeave={() => setActiveRowId((v) => (v === item.id ? null : v))}
+                    onFocus={() => setActiveRowId(item.id)}
+                    onBlur={() => setActiveRowId((v) => (v === item.id ? null : v))}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="min-w-0 truncate font-medium">
+                          {isCompact ? compactTitleForItem(item) : titleForItem(item)}
+                        </div>
+                        {!isCompact ? (
+                          <div className="flex items-center gap-1">
+                            <Badge variant="outline">{typeLabel(inst, item.instrument_type)}</Badge>
+                            {(inst?.exchange ?? item.exchange) ? (
+                              <Badge variant="outline">{inst?.exchange ?? item.exchange}</Badge>
                             ) : null}
+                            {hasPos ? <Badge variant="outline">POS</Badge> : null}
+                            {hasOpenOrder ? <Badge variant="outline">ORD</Badge> : null}
                           </div>
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground">
+                            {typeLabel(inst, item.instrument_type)}
+                          </div>
+                        )}
+                      </div>
+
+                      {!isCompact ? (
+                        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                          {inst?.instrument_type === 'OPTION' || inst?.instrument_type === 'FUTURE'
+                            ? `${u}${inst.expiry ? ` • ${formatExpiryHuman(inst.expiry)}` : ''}`
+                            : item.canonical_id ?? item.symbol_key}
+                        </div>
+                      ) : inst?.expiry ? (
+                        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                          {formatExpiryHuman(inst.expiry)}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {!isCompact ? (
+                      <div className="hidden sm:flex w-20 shrink-0 flex-col items-end">
+                        <div className="font-medium tabular-nums">
+                          {ltp != null ? ltp.toFixed(2) : '—'}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground tabular-nums">
+                          {spot != null ? `Spot ${spot.toFixed(0)}` : '—'}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="shrink-0">
+                      {showActions ? (
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-emerald-700 dark:text-emerald-300"
+                            onClick={() => openTrade(item, 'BUY')}
+                            disabled={!item.instrument && !item.underlying}
+                            aria-label="Buy"
+                          >
+                            {isWide ? 'Buy' : 'B'}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-red-700 dark:text-red-300"
+                            onClick={() => openTrade(item, 'SELL')}
+                            disabled={!item.instrument && !item.underlying}
+                            aria-label="Sell"
+                          >
+                            {isWide ? 'Sell' : 'S'}
+                          </Button>
+
                           {!isCompact ? (
-                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                              {item.canonical_id ?? item.symbol_key}
-                            </div>
-                          ) : item.instrument?.expiry ? (
-                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                              {formatExpiryHuman(item.instrument.expiry)}
-                            </div>
+                            <>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="outline"
+                                aria-label="View orders"
+                                onClick={() => navigate(`/orders?q=${encodeURIComponent(item.display_symbol)}`)}
+                              >
+                                <ReceiptText />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="outline"
+                                aria-label="View positions"
+                                onClick={() => navigate(`/positions?q=${encodeURIComponent(item.display_symbol)}`)}
+                              >
+                                <Briefcase />
+                              </Button>
+                            </>
                           ) : null}
-                        </td>
-                        <td className={cn('px-2 py-2', isCompact && 'py-1.5')}>
-                          <Badge variant="outline">{typeLabel(item.instrument, item.instrument_type)}</Badge>
-                        </td>
-                        <td className={cn('px-2 py-2 text-right', isCompact && 'py-1.5')}>
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="text-emerald-700 dark:text-emerald-300"
-                              onClick={() => openTrade(item, 'BUY')}
-                              disabled={!item.instrument && !item.underlying}
-                              aria-label="Buy"
-                            >
-                              {isWide ? 'Buy' : 'B'}
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="text-red-700 dark:text-red-300"
-                              onClick={() => openTrade(item, 'SELL')}
-                              disabled={!item.instrument && !item.underlying}
-                              aria-label="Sell"
-                            >
-                              {isWide ? 'Sell' : 'S'}
-                            </Button>
-                            {!isCompact ? (
-                              <>
-                                <Button
-                                  type="button"
-                                  size="icon"
-                                  variant="outline"
-                                  aria-label="View orders"
-                                  onClick={() => navigate(`/orders?q=${encodeURIComponent(item.display_symbol)}`)}
-                                >
-                                  <ReceiptText />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="icon"
-                                  variant="outline"
-                                  aria-label="View positions"
-                                  onClick={() => navigate(`/positions?q=${encodeURIComponent(item.display_symbol)}`)}
-                                >
-                                  <Briefcase />
-                                </Button>
-                              </>
-                            ) : null}
+
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            aria-label="Remove from watchlist"
+                            onClick={() => {
+                              if (!activeId) return
+                              void removeItem.mutate({ watchlistId: activeId, itemId: item.id })
+                            }}
+                          >
+                            <Trash2 />
+                          </Button>
+
+                          {isWide && !isDerivativeType(inst?.instrument_type ?? item.instrument_type) ? (
                             <Button
                               type="button"
                               size="icon"
                               variant="outline"
-                              aria-label="Remove from watchlist"
-                              onClick={() => {
-                                if (!activeId) return
-                                void removeItem.mutate({ watchlistId: activeId, itemId: item.id })
-                              }}
+                              aria-label="More actions"
+                              onClick={() => navigate(`/search?q=${encodeURIComponent(item.display_symbol)}`)}
                             >
-                              <Trash2 />
+                              <MoreHorizontal />
                             </Button>
-                            {!isCompact ? (
-                              <div className="ml-2 flex items-center gap-1">
-                                <Button
-                                  type="button"
-                                  size="icon"
-                                  variant="ghost"
-                                  aria-label="Move up"
-                                  disabled={idx === 0}
-                                  onClick={() => {
-                                    if (!activeId) return
-                                    const next = items.map((i) => i.id)
-                                    ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
-                                    void reorder.mutate({ watchlistId: activeId, itemIds: next })
-                                  }}
-                                >
-                                  <ArrowUp />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="icon"
-                                  variant="ghost"
-                                  aria-label="Move down"
-                                  disabled={idx === items.length - 1}
-                                  onClick={() => {
-                                    if (!activeId) return
-                                    const next = items.map((i) => i.id)
-                                    ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
-                                    void reorder.mutate({ watchlistId: activeId, itemIds: next })
-                                  }}
-                                >
-                                  <ArrowDown />
-                                </Button>
-                              </div>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                          ) : null}
+
+                          {canReorder ? (
+                            <div className="ml-1 flex items-center gap-1">
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                aria-label="Move up"
+                                disabled={idx === 0}
+                                onClick={() => {
+                                  if (!activeId) return
+                                  const next = filteredItems.map((i) => i.id)
+                                  ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+                                  void reorder.mutate({ watchlistId: activeId, itemIds: next })
+                                }}
+                              >
+                                <ArrowUp />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                aria-label="Move down"
+                                disabled={idx === filteredItems.length - 1}
+                                onClick={() => {
+                                  if (!activeId) return
+                                  const next = filteredItems.map((i) => i.id)
+                                  ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
+                                  void reorder.mutate({ watchlistId: activeId, itemIds: next })
+                                }}
+                              >
+                                <ArrowDown />
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          aria-label="Focus row actions"
+                          onClick={() => setActiveRowId(item.id)}
+                        >
+                          <MoreHorizontal />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </CardContent>
