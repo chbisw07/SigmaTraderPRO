@@ -12,13 +12,18 @@ import { WatchlistPage } from '@/pages/WatchlistPage'
 import { WATCHLIST_WIDTH_SPECS, clampWidth, useWatchlistLayoutStore } from '@/store/watchlistLayoutStore'
 
 export function RootLayout() {
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1280,
+  )
+
   const mode = useWatchlistLayoutStore((s) => s.mode)
   const widthByMode = useWatchlistLayoutStore((s) => s.widthByMode)
   const setWidth = useWatchlistLayoutStore((s) => s.setWidth)
   const spec = WATCHLIST_WIDTH_SPECS[mode]
-  const widthPx = clampWidth(widthByMode[mode] ?? spec.preset, spec.min, spec.max)
+  const viewportCapPx = Math.floor(viewportWidth * 0.3)
+  const maxPx = Math.min(spec.max, Math.max(spec.min, viewportCapPx))
   const minPx = spec.min
-  const maxPx = spec.max
+  const widthPx = clampWidth(widthByMode[mode] ?? spec.preset, minPx, maxPx)
 
   const [dragging, setDragging] = useState(false)
   const dragStartX = useRef(0)
@@ -29,11 +34,17 @@ export function RootLayout() {
   }, [widthPx])
 
   useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  useEffect(() => {
     if (!dragging) return
 
     const onMove = (e: MouseEvent) => {
       const dx = e.clientX - dragStartX.current
-      setWidth(mode, dragStartWidth.current + dx)
+      setWidth(mode, clampWidth(dragStartWidth.current + dx, minPx, maxPx))
     }
 
     const onUp = () => setDragging(false)
@@ -44,7 +55,7 @@ export function RootLayout() {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [dragging, mode, setWidth])
+  }, [dragging, mode, maxPx, minPx, setWidth])
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">

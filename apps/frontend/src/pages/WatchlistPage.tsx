@@ -724,7 +724,17 @@ export function WatchlistPage() {
                             {badge.label}
                           </div>
                           <div className="min-w-0">
-                            <div className="truncate font-medium">{titleForInstrument(i)}</div>
+                            <div
+                              className="font-medium leading-tight break-words"
+                              style={{
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                              }}
+                            >
+                              {titleForInstrument(i)}
+                            </div>
                             <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                               {i.exchange} • {typeLabel(i, null)}
                             </div>

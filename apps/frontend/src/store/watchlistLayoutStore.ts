@@ -10,9 +10,10 @@ type WidthSpec = {
 }
 
 export const WATCHLIST_WIDTH_SPECS: Record<WatchlistWidthMode, WidthSpec> = {
-  compact: { preset: 280, min: 260, max: 320 },
-  standard: { preset: 340, min: 320, max: 400 },
-  wide: { preset: 460, min: 400, max: 560 },
+  // Note: final max is further capped in the shell to 30% of viewport width.
+  compact: { preset: 280, min: 260, max: 520 },
+  standard: { preset: 340, min: 320, max: 720 },
+  wide: { preset: 460, min: 400, max: 960 },
 }
 
 export function clampWidth(n: number, min: number, max: number) {
