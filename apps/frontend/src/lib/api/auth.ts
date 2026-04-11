@@ -5,6 +5,7 @@ export type UserOut = {
   email: string
   is_active: boolean
   last_used_broker: string | null
+  include_broker_orders: boolean
 }
 
 export type TokenPairResponse = {
@@ -37,7 +38,7 @@ export async function me(accessToken: string): Promise<UserOut> {
 
 export async function updatePreferences(
   accessToken: string,
-  payload: { last_used_broker: string | null },
+  payload: { last_used_broker?: string | null; include_broker_orders?: boolean | null },
 ): Promise<UserOut> {
   return apiRequest<UserOut>('/api/v1/auth/me/preferences', {
     method: 'PATCH',

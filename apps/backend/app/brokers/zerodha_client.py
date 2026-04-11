@@ -20,6 +20,14 @@ class ZerodhaOrderError(RuntimeError):
     pass
 
 
+class ZerodhaOrderBookError(RuntimeError):
+    pass
+
+
+class ZerodhaPositionBookError(RuntimeError):
+    pass
+
+
 def get_login_url(*, api_key: str) -> str:
     kite = KiteConnect(api_key=api_key)
     return str(kite.login_url())
@@ -86,3 +94,37 @@ def place_order(
     if not order_id:
         raise ZerodhaOrderError("Zerodha order placement returned no order_id")
     return str(order_id)
+
+
+def fetch_orders(*, api_key: str, access_token: str) -> list[dict]:
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(access_token)
+    try:
+        orders = kite.orders()
+    except Exception as exc:  # noqa: BLE001 - external SDK best-effort
+        msg = str(exc).strip().replace("\n", " ")
+        msg = msg[:240] if msg else "unknown error"
+        raise ZerodhaOrderBookError(f"Zerodha orderbook fetch failed ({msg})") from exc
+    if not isinstance(orders, list):
+        raise ZerodhaOrderBookError("Zerodha orderbook payload must be a list")
+    return orders
+
+
+def fetch_positions(*, api_key: str, access_token: str) -> list[dict]:
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(access_token)
+    try:
+        payload = kite.positions()
+    except Exception as exc:  # noqa: BLE001 - external SDK best-effort
+        msg = str(exc).strip().replace("\n", " ")
+        msg = msg[:240] if msg else "unknown error"
+        raise ZerodhaPositionBookError(
+            f"Zerodha positionbook fetch failed ({msg})"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise ZerodhaPositionBookError("Zerodha positionbook payload must be a dict")
+    net = payload.get("net") or []
+    if not isinstance(net, list):
+        raise ZerodhaPositionBookError("Zerodha positionbook 'net' must be a list")
+    return [row for row in net if isinstance(row, dict)]

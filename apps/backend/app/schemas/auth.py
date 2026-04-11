@@ -33,3 +33,4 @@ class AccessTokenResponse(BaseModel):
 
 class PreferencesUpdateRequest(BaseModel):
     last_used_broker: str | None = None
+    include_broker_orders: bool | None = None

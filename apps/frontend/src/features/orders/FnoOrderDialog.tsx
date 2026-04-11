@@ -32,6 +32,14 @@ type Props = {
         instrument: instrumentsApi.InstrumentOut
         broker?: ordersApi.BrokerKey | null
         referencePrice?: number | null
+        prefill?: {
+          side?: ordersApi.OrderSide
+          lots?: number
+          product?: 'MIS' | 'NRML'
+          order_type?: ordersApi.OrderType
+          limit_price?: number | null
+          intent?: ordersApi.OrderIntentMetadata
+        }
       }
 }
 
@@ -57,6 +65,7 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
   const setFnoOrderTypePref = useOrderPrefsStore((s) => s.setFnoOrderType)
 
   const instrument = launch.mode === 'contract' ? launch.instrument : null
+  const prefill = launch.mode === 'contract' ? (launch.prefill ?? null) : null
 
   const getPremium = useQuoteStore((s) => s.getPremium)
   const setPremium = useQuoteStore((s) => s.setPremium)
@@ -99,12 +108,14 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
   const [optionType, setOptionType] = useState<'CE' | 'PE'>(initialOptionType)
   const [strike, setStrike] = useState<number | null>(initialStrike)
 
-  const [side, setSide] = useState<ordersApi.OrderSide>('BUY')
-  const [lots, setLots] = useState(1)
-  const [product, setProduct] = useState<'MIS' | 'NRML'>(fnoProductPref)
-  const [orderType, setOrderType] = useState<ordersApi.OrderType>(fnoOrderTypePref)
+  const [side, setSide] = useState<ordersApi.OrderSide>(prefill?.side ?? 'BUY')
+  const [lots, setLots] = useState(prefill?.lots ?? 1)
+  const [product, setProduct] = useState<'MIS' | 'NRML'>(prefill?.product ?? fnoProductPref)
+  const [orderType, setOrderType] = useState<ordersApi.OrderType>(prefill?.order_type ?? fnoOrderTypePref)
   const [limitPrice, setLimitPrice] = useState<number | null>(
-    fnoOrderTypePref === 'LIMIT' ? initialPremium : null,
+    (prefill?.order_type ?? fnoOrderTypePref) === 'LIMIT'
+      ? (prefill?.limit_price ?? initialPremium)
+      : null,
   )
 
   const [message, setMessage] = useState<string | null>(null)
@@ -255,8 +266,32 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
       // If we have a cached reference premium, treat it as a safe default for LIMIT
       // so preview/create uses the same number the UI is showing.
       limit_price: orderType === 'LIMIT' ? (limitPrice ?? hydratedPremium) : null,
+      source: prefill?.intent?.source ?? 'manual_ui',
+      intent_type: prefill?.intent?.intent_type ?? 'ENTRY',
+      trigger_mode: prefill?.intent?.trigger_mode ?? null,
+      risk_mode: prefill?.intent?.risk_mode ?? null,
+      sl_value: prefill?.intent?.sl_value ?? null,
+      tp_value: prefill?.intent?.tp_value ?? null,
+      trailing_value: prefill?.intent?.trailing_value ?? null,
+      parent_order_id: prefill?.intent?.parent_order_id ?? null,
+      linked_position_id: prefill?.intent?.linked_position_id ?? null,
+      broker_context: prefill?.intent?.broker_context ?? null,
     }),
-    [broker, instrumentType, underlying, expiry, strike, optionType, side, lots, product, orderType, limitPrice, hydratedPremium],
+    [
+      broker,
+      instrumentType,
+      underlying,
+      expiry,
+      strike,
+      optionType,
+      side,
+      lots,
+      product,
+      orderType,
+      limitPrice,
+      hydratedPremium,
+      prefill?.intent,
+    ],
   )
 
   const previewMutation = useMutation({

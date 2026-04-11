@@ -71,6 +71,7 @@ test('renders the protected shell when authenticated', async () => {
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: null,
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -94,6 +95,7 @@ test('logout clears auth state and redirects to login', async () => {
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: null,
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -115,6 +117,7 @@ test('logout clears auth state and redirects to login', async () => {
           email: 'dev@example.com',
           is_active: true,
           last_used_broker: null,
+          include_broker_orders: true,
         },
       },
       version: 1,
@@ -145,6 +148,7 @@ test('brokers page renders broker cards', async () => {
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: null,
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -169,6 +173,7 @@ test('search page renders and returns canonical results', async () => {
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: null,
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -197,6 +202,7 @@ test('stock order dialog opens from search and previews order', async () => {
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: 'angel',
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -233,6 +239,7 @@ test('strike discovery renders option chain for selected underlying', async () =
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: null,
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -269,6 +276,7 @@ test('F&O order dialog opens from option chain and previews order', async () => 
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: 'angel',
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -316,6 +324,7 @@ test('F&O strike row Trade prefills premium and shows ATM/ITM/OTM labels', async
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: 'angel',
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -365,6 +374,7 @@ test('future Trade click opens F&O dialog with contract prefill', async () => {
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: 'angel',
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -401,6 +411,7 @@ test('manual launch opens blank dialogs (no contract prefill)', async () => {
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: 'angel',
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -432,6 +443,7 @@ test('reopening Trade on another row hydrates dialog state', async () => {
       email: 'dev@example.com',
       is_active: true,
       last_used_broker: 'angel',
+      include_broker_orders: true,
     },
     isRefreshing: false,
     error: null,
@@ -463,4 +475,54 @@ test('reopening Trade on another row hydrates dialog state', async () => {
   expect(await screen.findByText('Stock order')).toBeInTheDocument()
   const dialog2 = screen.getByRole('dialog')
   expect(within(dialog2).getByText('NSE_EQ:EQUITY:EQUITY:TCS')).toBeInTheDocument()
+})
+
+test('orders page renders and repeat opens prefilled ticket', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: 'angel',
+      include_broker_orders: true,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/orders')
+  expect(await screen.findByRole('heading', { name: 'Orders' })).toBeInTheDocument()
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Repeat' }))
+  expect(await screen.findByText('Stock order')).toBeInTheDocument()
+})
+
+test('positions page renders and squareoff action opens ticket draft', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: 'angel',
+      include_broker_orders: true,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/positions')
+  expect(await screen.findByRole('heading', { name: 'Positions' })).toBeInTheDocument()
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Square off' }))
+  expect(await screen.findByText('Stock order')).toBeInTheDocument()
+  // Squareoff draft is a SELL.
+  expect(screen.getByRole('button', { name: 'Place sell' })).toBeInTheDocument()
 })

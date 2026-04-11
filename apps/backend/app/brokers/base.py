@@ -11,6 +11,8 @@ from app.orders.types import (
     DerivativeOrderResult,
     EquityOrderRequest,
     EquityOrderResult,
+    ExternalBrokerOrder,
+    ExternalBrokerPosition,
 )
 
 
@@ -58,4 +60,24 @@ class BrokerAdapter(ABC):
     def place_derivative_order(
         self, db: Session, user: User, *, request: DerivativeOrderRequest
     ) -> DerivativeOrderResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_recent_orders(self, db: Session, user: User) -> list[ExternalBrokerOrder]:
+        """
+        Fetch broker orderbook (recent/practically accessible orders).
+
+        Broker remains the truth for lifecycle/status; this is used to populate
+        the unified Orders workspace. Implementations must not return secrets.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_positions(self, db: Session, user: User) -> list[ExternalBrokerPosition]:
+        """
+        Fetch broker positionbook (net positions).
+
+        Broker remains the truth for open positions; this is used to improve the
+        local Positions ledger. Implementations must not return secrets.
+        """
         raise NotImplementedError

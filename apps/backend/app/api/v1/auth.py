@@ -22,7 +22,9 @@ from app.services.auth_service import (
     create_user,
     issue_token_pair,
     refresh_access_token,
-    update_last_used_broker,
+)
+from app.services.auth_service import (
+    update_preferences as update_user_preferences,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -126,5 +128,10 @@ def update_preferences(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> UserOut:
-    updated = update_last_used_broker(db, current_user, payload.last_used_broker)
+    kwargs: dict = {}
+    if "last_used_broker" in payload.model_fields_set:
+        kwargs["last_used_broker"] = payload.last_used_broker
+    if "include_broker_orders" in payload.model_fields_set:
+        kwargs["include_broker_orders"] = payload.include_broker_orders
+    updated = update_user_preferences(db, current_user, **kwargs)
     return UserOut.model_validate(updated, from_attributes=True)

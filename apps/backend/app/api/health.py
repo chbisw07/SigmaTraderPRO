@@ -32,7 +32,13 @@ def readiness() -> JSONResponse:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
             # Basic schema guardrail (helps catch "forgot to migrate" early).
-            required = ["users", "broker_connections", "instruments", "orders"]
+            required = [
+                "users",
+                "broker_connections",
+                "instruments",
+                "orders",
+                "positions",
+            ]
             missing: list[str] = []
             for name in required:
                 row = conn.execute(

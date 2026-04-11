@@ -4,12 +4,16 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from app.brokers.base import BrokerAdapter, BrokerNotConfiguredError
+from app.brokers.base import BrokerAdapter, BrokerError, BrokerNotConfiguredError
 from app.brokers.types import BrokerKey, BrokerSessionState, BrokerStatus
 from app.brokers.zerodha_client import (
     ZerodhaAuthError,
+    ZerodhaOrderBookError,
     ZerodhaOrderError,
+    ZerodhaPositionBookError,
     exchange_request_token,
+    fetch_orders,
+    fetch_positions,
     get_login_url,
     place_order,
 )
@@ -24,6 +28,8 @@ from app.orders.types import (
     DerivativeOrderResult,
     EquityOrderRequest,
     EquityOrderResult,
+    ExternalBrokerOrder,
+    ExternalBrokerPosition,
     OrderProduct,
     OrderType,
 )
@@ -403,3 +409,211 @@ class ZerodhaAdapter(BrokerAdapter):
             broker_order_id=broker_order_id,
         )
         return DerivativeOrderResult(broker_order_id=broker_order_id)
+
+    def fetch_recent_orders(self, db: Session, user: User) -> list[ExternalBrokerOrder]:
+        conn = _get_connection(db, user.id)
+        if not conn or not conn.credentials_enc:
+            raise BrokerNotConfiguredError("Broker is not configured")
+        status = _compute_status(conn)
+        if not status.connected or status.stale:
+            raise BrokerNotConfiguredError("Broker session is not connected")
+        if not conn.session_enc:
+            raise BrokerNotConfiguredError("Broker session is missing")
+
+        try:
+            creds = decrypt_json(
+                conn.credentials_enc, key=settings.broker_encryption_key
+            )
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+        except CryptoError as exc:
+            raise BrokerNotConfiguredError("Broker session decrypt failed") from exc
+
+        api_key = str(creds.get("api_key") or "")
+        access_token = str(session.get("access_token") or "")
+        if not api_key or not access_token:
+            raise BrokerNotConfiguredError("Broker session token missing")
+
+        try:
+            rows = fetch_orders(api_key=api_key, access_token=access_token)
+        except ZerodhaOrderBookError as exc:
+            raise BrokerError(str(exc)) from exc
+
+        out: list[ExternalBrokerOrder] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            broker_order_id = row.get("order_id") or row.get("orderId")
+            exchange_order_id = row.get("exchange_order_id") or row.get(
+                "exchangeOrderId"
+            )
+            exchange = row.get("exchange")
+            trading_symbol = row.get("tradingsymbol") or row.get("trading_symbol")
+            instrument_token = row.get("instrument_token")
+
+            placed_at = None
+            ts = (
+                row.get("order_timestamp")
+                or row.get("exchange_timestamp")
+                or row.get("created_at")
+            )
+            if ts:
+                try:
+                    s = str(ts).strip().replace("Z", "+00:00")
+                    # Some SDKs return "YYYY-MM-DD HH:MM:SS"
+                    if " " in s and "T" not in s:
+                        s = s.replace(" ", "T", 1)
+                    placed_at = datetime.fromisoformat(s)
+                except Exception:
+                    placed_at = None
+
+            qty = None
+            try:
+                if row.get("quantity") is not None:
+                    qty = int(row.get("quantity"))
+            except Exception:
+                qty = None
+
+            price = None
+            avg_price = None
+            try:
+                if row.get("price") is not None:
+                    price = float(row.get("price"))
+            except Exception:
+                price = None
+            try:
+                if row.get("average_price") is not None:
+                    avg_price = float(row.get("average_price"))
+            except Exception:
+                avg_price = None
+
+            out.append(
+                ExternalBrokerOrder(
+                    broker=BrokerKey.zerodha.value,
+                    broker_order_id=str(broker_order_id) if broker_order_id else None,
+                    exchange_order_id=(
+                        str(exchange_order_id) if exchange_order_id else None
+                    ),
+                    exchange=str(exchange) if exchange else None,
+                    trading_symbol=str(trading_symbol) if trading_symbol else None,
+                    broker_instrument_id=(
+                        str(instrument_token) if instrument_token is not None else None
+                    ),
+                    placed_at=placed_at,
+                    side=str(
+                        row.get("transaction_type") or row.get("transactionType") or ""
+                    )
+                    or None,
+                    product=str(row.get("product") or "") or None,
+                    order_type=str(row.get("order_type") or row.get("orderType") or "")
+                    or None,
+                    quantity=qty,
+                    price=price,
+                    avg_price=avg_price,
+                    status=str(row.get("status") or "") or None,
+                    rejection_reason=str(
+                        row.get("status_message") or row.get("message") or ""
+                    )
+                    or None,
+                )
+            )
+        return out
+
+    def fetch_positions(self, db: Session, user: User) -> list[ExternalBrokerPosition]:
+        conn = _get_connection(db, user.id)
+        if not conn or not conn.credentials_enc:
+            raise BrokerNotConfiguredError("Broker is not configured")
+        status = _compute_status(conn)
+        if not status.connected or status.stale:
+            raise BrokerNotConfiguredError("Broker session is not connected")
+        if not conn.session_enc:
+            raise BrokerNotConfiguredError("Broker session is missing")
+
+        try:
+            creds = decrypt_json(
+                conn.credentials_enc, key=settings.broker_encryption_key
+            )
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+        except CryptoError as exc:
+            raise BrokerNotConfiguredError("Broker session decrypt failed") from exc
+
+        api_key = str(creds.get("api_key") or "")
+        access_token = str(session.get("access_token") or "")
+        if not api_key or not access_token:
+            raise BrokerNotConfiguredError("Broker session token missing")
+
+        try:
+            rows = fetch_positions(api_key=api_key, access_token=access_token)
+        except ZerodhaPositionBookError as exc:
+            raise BrokerError(str(exc)) from exc
+
+        out: list[ExternalBrokerPosition] = []
+        for row in rows:
+            trading_symbol = row.get("tradingsymbol") or row.get("trading_symbol")
+            exchange = row.get("exchange")
+            instrument_token = row.get("instrument_token")
+            broker_position_id = row.get("position_id") or row.get("positionId")
+
+            net_qty = 0
+            try:
+                if row.get("quantity") is not None:
+                    net_qty = int(row.get("quantity"))
+            except Exception:
+                net_qty = 0
+
+            avg_price = None
+            last_price = None
+            realized = None
+            unrealized = None
+            mtm = None
+            try:
+                if row.get("average_price") is not None:
+                    avg_price = float(row.get("average_price"))
+            except Exception:
+                avg_price = None
+            try:
+                if row.get("last_price") is not None:
+                    last_price = float(row.get("last_price"))
+            except Exception:
+                last_price = None
+            try:
+                if row.get("realised") is not None:
+                    realized = float(row.get("realised"))
+                elif row.get("realized") is not None:
+                    realized = float(row.get("realized"))
+            except Exception:
+                realized = None
+            try:
+                if row.get("unrealised") is not None:
+                    unrealized = float(row.get("unrealised"))
+                elif row.get("unrealized") is not None:
+                    unrealized = float(row.get("unrealized"))
+            except Exception:
+                unrealized = None
+            try:
+                if row.get("pnl") is not None:
+                    mtm = float(row.get("pnl"))
+                elif row.get("mtm") is not None:
+                    mtm = float(row.get("mtm"))
+            except Exception:
+                mtm = None
+
+            out.append(
+                ExternalBrokerPosition(
+                    broker=BrokerKey.zerodha.value,
+                    broker_position_id=(
+                        str(broker_position_id) if broker_position_id else None
+                    ),
+                    exchange=str(exchange) if exchange else None,
+                    trading_symbol=str(trading_symbol) if trading_symbol else None,
+                    broker_instrument_id=(
+                        str(instrument_token) if instrument_token is not None else None
+                    ),
+                    net_quantity=net_qty,
+                    avg_price=avg_price,
+                    last_price=last_price,
+                    realized_pnl=realized,
+                    unrealized_pnl=unrealized,
+                    mtm=mtm,
+                )
+            )
+        return out

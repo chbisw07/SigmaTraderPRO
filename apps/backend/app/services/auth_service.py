@@ -72,6 +72,27 @@ def update_last_used_broker(db: Session, user: User, broker: str | None) -> User
     return user
 
 
+_UNSET: object = object()
+
+
+def update_preferences(
+    db: Session,
+    user: User,
+    *,
+    last_used_broker: str | None | object = _UNSET,
+    include_broker_orders: bool | None | object = _UNSET,
+) -> User:
+    # Prefer explicit field updates; allow clearing values via null.
+    if last_used_broker is not _UNSET:
+        user.last_used_broker = last_used_broker  # type: ignore[assignment]
+    if include_broker_orders is not _UNSET:
+        user.include_broker_orders = bool(include_broker_orders)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def create_user(db: Session, email: str, password: str) -> User:
     user = User(email=email, password_hash=hash_password(password), is_active=True)
     db.add(user)

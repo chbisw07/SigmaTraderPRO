@@ -12,6 +12,7 @@ import app.models.broker_connection  # noqa: F401
 import app.models.instrument  # noqa: F401
 import app.models.instrument_mapping  # noqa: F401
 import app.models.order  # noqa: F401
+import app.models.position  # noqa: F401
 import app.models.user  # noqa: F401
 from app.core.config import settings
 from app.core.crypto import encrypt_json
@@ -231,7 +232,7 @@ def test_stock_order_create_places_order_with_mocked_broker(
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "submitted"
+    assert data["status"] == "PENDING"
     assert data["broker_order_id"] == "ANGEL_ORDER_ID_1"
 
     updated_user = db_session.query(User).filter(User.id == user.id).one()

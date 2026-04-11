@@ -6,11 +6,15 @@ from sqlalchemy.orm import Session
 
 from app.brokers.angel_client import (
     AngelAuthError,
+    AngelOrderBookError,
     AngelOrderError,
+    AngelPositionBookError,
+    fetch_order_book,
+    fetch_position_book,
     login_by_password,
     place_order,
 )
-from app.brokers.base import BrokerAdapter, BrokerNotConfiguredError
+from app.brokers.base import BrokerAdapter, BrokerError, BrokerNotConfiguredError
 from app.brokers.types import BrokerKey, BrokerSessionState, BrokerStatus
 from app.core.config import settings
 from app.core.crypto import CryptoError, decrypt_json, encrypt_json
@@ -23,6 +27,8 @@ from app.orders.types import (
     DerivativeOrderResult,
     EquityOrderRequest,
     EquityOrderResult,
+    ExternalBrokerOrder,
+    ExternalBrokerPosition,
     OrderProduct,
     OrderType,
 )
@@ -404,3 +410,214 @@ class AngelAdapter(BrokerAdapter):
             broker_order_id=broker_order_id,
         )
         return DerivativeOrderResult(broker_order_id=broker_order_id)
+
+    def fetch_recent_orders(self, db: Session, user: User) -> list[ExternalBrokerOrder]:
+        conn = _get_connection(db, user.id)
+        if not conn or not conn.credentials_enc:
+            raise BrokerNotConfiguredError("Broker is not configured")
+        status = _compute_status(conn)
+        if not status.connected or status.stale:
+            raise BrokerNotConfiguredError("Broker session is not connected")
+        if not conn.session_enc:
+            raise BrokerNotConfiguredError("Broker session is missing")
+
+        try:
+            creds = decrypt_json(
+                conn.credentials_enc, key=settings.broker_encryption_key
+            )
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+        except CryptoError as exc:
+            raise BrokerNotConfiguredError("Broker session decrypt failed") from exc
+
+        api_key = str(creds.get("api_key") or "")
+        jwt_token = str(session.get("jwt_token") or "")
+        if not api_key or not jwt_token:
+            raise BrokerNotConfiguredError("Broker session token missing")
+
+        try:
+            rows = fetch_order_book(api_key=api_key, jwt_token=jwt_token)
+        except AngelOrderBookError as exc:
+            raise BrokerError(str(exc)) from exc
+
+        out: list[ExternalBrokerOrder] = []
+        for row in rows:
+            # Safe best-effort normalization; unknown fields remain None.
+            broker_order_id = (
+                row.get("orderid")
+                or row.get("orderId")
+                or row.get("uniqueorderid")
+                or row.get("uniqueOrderId")
+            )
+            exchange_order_id = row.get("exchangeorderid") or row.get("exchangeOrderId")
+            trading_symbol = row.get("tradingsymbol") or row.get("tradingSymbol")
+            symbol_token = row.get("symboltoken") or row.get("symbolToken")
+            exchange = row.get("exchange") or row.get("exch_seg")
+
+            placed_at = None
+            ts = (
+                row.get("updatetime")
+                or row.get("orderdatetime")
+                or row.get("orderTime")
+            )
+            if ts:
+                try:
+                    # Common formats: "2026-04-10 09:15:00" or ISO.
+                    s = str(ts).replace("Z", "+00:00").replace(" ", "T", 1)
+                    placed_at = datetime.fromisoformat(s)
+                except Exception:
+                    placed_at = None
+
+            qty = None
+            try:
+                if row.get("quantity") is not None:
+                    qty = int(row.get("quantity"))
+            except Exception:
+                qty = None
+
+            price = None
+            avg_price = None
+            try:
+                if row.get("price") is not None:
+                    price = float(row.get("price"))
+            except Exception:
+                price = None
+            try:
+                if row.get("averageprice") is not None:
+                    avg_price = float(row.get("averageprice"))
+            except Exception:
+                avg_price = None
+
+            out.append(
+                ExternalBrokerOrder(
+                    broker=BrokerKey.angel.value,
+                    broker_order_id=str(broker_order_id) if broker_order_id else None,
+                    exchange_order_id=(
+                        str(exchange_order_id) if exchange_order_id else None
+                    ),
+                    exchange=str(exchange) if exchange else None,
+                    trading_symbol=str(trading_symbol) if trading_symbol else None,
+                    broker_instrument_id=str(symbol_token) if symbol_token else None,
+                    placed_at=placed_at,
+                    side=str(
+                        row.get("transactiontype") or row.get("transactionType") or ""
+                    )
+                    or None,
+                    product=str(row.get("producttype") or row.get("productType") or "")
+                    or None,
+                    order_type=str(row.get("ordertype") or row.get("orderType") or "")
+                    or None,
+                    quantity=qty,
+                    price=price,
+                    avg_price=avg_price,
+                    status=str(row.get("orderstatus") or row.get("orderStatus") or "")
+                    or None,
+                    rejection_reason=str(row.get("text") or row.get("message") or "")
+                    or None,
+                )
+            )
+        return out
+
+    def fetch_positions(self, db: Session, user: User) -> list[ExternalBrokerPosition]:
+        conn = _get_connection(db, user.id)
+        if not conn or not conn.credentials_enc:
+            raise BrokerNotConfiguredError("Broker is not configured")
+        status = _compute_status(conn)
+        if not status.connected or status.stale:
+            raise BrokerNotConfiguredError("Broker session is not connected")
+        if not conn.session_enc:
+            raise BrokerNotConfiguredError("Broker session is missing")
+
+        try:
+            creds = decrypt_json(
+                conn.credentials_enc, key=settings.broker_encryption_key
+            )
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+        except CryptoError as exc:
+            raise BrokerNotConfiguredError("Broker session decrypt failed") from exc
+
+        api_key = str(creds.get("api_key") or "")
+        jwt_token = str(session.get("jwt_token") or "")
+        if not api_key or not jwt_token:
+            raise BrokerNotConfiguredError("Broker session token missing")
+
+        try:
+            rows = fetch_position_book(api_key=api_key, jwt_token=jwt_token)
+        except AngelPositionBookError as exc:
+            raise BrokerError(str(exc)) from exc
+
+        out: list[ExternalBrokerPosition] = []
+        for row in rows:
+            trading_symbol = row.get("tradingsymbol") or row.get("tradingSymbol")
+            symbol_token = row.get("symboltoken") or row.get("symbolToken")
+            exchange = row.get("exchange") or row.get("exch_seg")
+            broker_position_id = row.get("positionid") or row.get("positionId")
+
+            net_qty = 0
+            try:
+                if row.get("netqty") is not None:
+                    net_qty = int(row.get("netqty"))
+                elif row.get("netQty") is not None:
+                    net_qty = int(row.get("netQty"))
+            except Exception:
+                net_qty = 0
+
+            avg_price = None
+            last_price = None
+            realized = None
+            unrealized = None
+            mtm = None
+
+            try:
+                if row.get("avgnetprice") is not None:
+                    avg_price = float(row.get("avgnetprice"))
+                elif row.get("avgPrice") is not None:
+                    avg_price = float(row.get("avgPrice"))
+            except Exception:
+                avg_price = None
+            try:
+                if row.get("ltp") is not None:
+                    last_price = float(row.get("ltp"))
+                elif row.get("last_price") is not None:
+                    last_price = float(row.get("last_price"))
+            except Exception:
+                last_price = None
+            try:
+                if row.get("realised") is not None:
+                    realized = float(row.get("realised"))
+                elif row.get("realized") is not None:
+                    realized = float(row.get("realized"))
+            except Exception:
+                realized = None
+            try:
+                if row.get("unrealised") is not None:
+                    unrealized = float(row.get("unrealised"))
+                elif row.get("unrealized") is not None:
+                    unrealized = float(row.get("unrealized"))
+            except Exception:
+                unrealized = None
+            try:
+                if row.get("mtm") is not None:
+                    mtm = float(row.get("mtm"))
+                elif row.get("pnl") is not None:
+                    mtm = float(row.get("pnl"))
+            except Exception:
+                mtm = None
+
+            out.append(
+                ExternalBrokerPosition(
+                    broker=BrokerKey.angel.value,
+                    broker_position_id=(
+                        str(broker_position_id) if broker_position_id else None
+                    ),
+                    exchange=str(exchange) if exchange else None,
+                    trading_symbol=str(trading_symbol) if trading_symbol else None,
+                    broker_instrument_id=str(symbol_token) if symbol_token else None,
+                    net_quantity=net_qty,
+                    avg_price=avg_price,
+                    last_price=last_price,
+                    realized_pnl=realized,
+                    unrealized_pnl=unrealized,
+                    mtm=mtm,
+                )
+            )
+        return out

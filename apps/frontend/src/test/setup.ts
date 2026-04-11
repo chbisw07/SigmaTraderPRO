@@ -34,16 +34,19 @@ beforeAll(() => {
         email: 'dev@example.com',
         is_active: true,
         last_used_broker: null,
+        include_broker_orders: true,
       })
     }
 
     if (path === '/api/v1/auth/me/preferences') {
       let lastUsedBroker: string | null = null
+      let includeBrokerOrders: boolean | null = null
       try {
         const body = typeof init?.body === 'string' ? init.body : null
         if (body) {
-          const parsed = JSON.parse(body) as { last_used_broker?: string | null }
+          const parsed = JSON.parse(body) as { last_used_broker?: string | null; include_broker_orders?: boolean | null }
           lastUsedBroker = parsed.last_used_broker ?? null
+          includeBrokerOrders = parsed.include_broker_orders ?? null
         }
       } catch {
         // ignore
@@ -53,6 +56,7 @@ beforeAll(() => {
         email: 'dev@example.com',
         is_active: true,
         last_used_broker: lastUsedBroker,
+        include_broker_orders: includeBrokerOrders ?? true,
       })
     }
 
@@ -66,6 +70,7 @@ beforeAll(() => {
           email: 'dev@example.com',
           is_active: true,
           last_used_broker: null,
+          include_broker_orders: true,
         },
       })
     }
@@ -80,6 +85,7 @@ beforeAll(() => {
           email: 'dev@example.com',
           is_active: true,
           last_used_broker: null,
+          include_broker_orders: true,
         },
       })
     }
@@ -357,7 +363,9 @@ beforeAll(() => {
       })
     }
 
-    if (path === '/api/v1/orders') {
+    const method = (init?.method ?? 'GET').toUpperCase()
+
+    if (path === '/api/v1/orders' && method === 'POST') {
       return jsonResponse({
         order_id: 1,
         status: 'submitted',
@@ -434,6 +442,343 @@ beforeAll(() => {
           warnings: [],
         },
       })
+    }
+
+    if (path === '/api/v1/orders' && method === 'GET') {
+      return jsonResponse({
+        items: [
+          {
+            id: 1,
+            created_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+            broker: 'angel',
+            canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+            instrument: {
+              canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+              exchange: 'NSE_EQ',
+              segment: 'EQUITY',
+              instrument_type: 'EQUITY',
+              symbol_root: 'INFY',
+              display_symbol: 'INFY',
+              underlying: null,
+              expiry: null,
+              strike: null,
+              option_type: null,
+              lot_size: 1,
+              tick_size: 0.05,
+              isin: 'INE009A01021',
+              is_active: true,
+              created_at: '2026-04-09T00:00:00Z',
+              updated_at: '2026-04-09T00:00:00Z',
+            },
+            side: 'BUY',
+            quantity: 1,
+            lots: null,
+            product: 'CNC',
+            order_type: 'MARKET',
+            placed_price: null,
+            avg_executed_price: null,
+            status: 'PENDING',
+            broker_order_id: 'BROKER_ORDER_1',
+            rejection_reason: null,
+            source: 'manual_ui',
+            intent_type: 'ENTRY',
+            trigger_mode: 'MARKET',
+            linked_position_id: 1,
+          },
+        ],
+      })
+    }
+
+    if (path === '/api/v1/orders/workspace') {
+      return jsonResponse({
+        items: [
+          {
+            row_id: 'm:1:angel:BROKER_ORDER_1',
+            source_origin: 'merged',
+            reconciliation_state: 'matched',
+            broker: 'angel',
+            internal_order_id: 1,
+            broker_order_id: 'BROKER_ORDER_1',
+            exchange_order_id: 'EXCH_1',
+            canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+            instrument: {
+              canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+              exchange: 'NSE_EQ',
+              segment: 'EQUITY',
+              instrument_type: 'EQUITY',
+              symbol_root: 'INFY',
+              display_symbol: 'INFY',
+              underlying: null,
+              expiry: null,
+              strike: null,
+              option_type: null,
+              lot_size: 1,
+              tick_size: 0.05,
+              isin: 'INE009A01021',
+              is_active: true,
+              created_at: '2026-04-09T00:00:00Z',
+              updated_at: '2026-04-09T00:00:00Z',
+            },
+            symbol_display: 'INFY',
+            side: 'BUY',
+            product: 'CNC',
+            quantity: 1,
+            lots: null,
+            order_type: 'MARKET',
+            placed_price: null,
+            avg_price: null,
+            status: 'PENDING',
+            rejection_reason: null,
+            placed_at: '2026-04-09T00:00:00Z',
+            source: 'manual_ui',
+            intent_type: 'ENTRY',
+            linked_position_id: 1,
+          },
+        ],
+        meta: { include_broker_orders: true, mode: 'merged', broker_errors: {} },
+      })
+    }
+
+    if (
+      path.startsWith('/api/v1/orders/') &&
+      !['/api/v1/orders/repeat', '/api/v1/orders/reverse', '/api/v1/orders/reconcile'].includes(path) &&
+      !path.endsWith('/preview') &&
+      !path.endsWith('/fno') &&
+      !path.endsWith('/fno/preview')
+    ) {
+      // order detail
+      return jsonResponse({
+        order: {
+          id: 1,
+          created_at: '2026-04-09T00:00:00Z',
+          updated_at: '2026-04-09T00:00:00Z',
+          broker: 'angel',
+          canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+          instrument: {
+            canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+            exchange: 'NSE_EQ',
+            segment: 'EQUITY',
+            instrument_type: 'EQUITY',
+            symbol_root: 'INFY',
+            display_symbol: 'INFY',
+            underlying: null,
+            expiry: null,
+            strike: null,
+            option_type: null,
+            lot_size: 1,
+            tick_size: 0.05,
+            isin: 'INE009A01021',
+            is_active: true,
+            created_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+          },
+          side: 'BUY',
+          quantity: 1,
+          lots: null,
+          product: 'CNC',
+          order_type: 'MARKET',
+          placed_price: null,
+          avg_executed_price: null,
+          status: 'PENDING',
+          broker_order_id: 'BROKER_ORDER_1',
+          rejection_reason: null,
+          source: 'manual_ui',
+          intent_type: 'ENTRY',
+          trigger_mode: 'MARKET',
+          linked_position_id: 1,
+        },
+        preview_snapshot_json: { canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY' },
+        broker_payload_json: { trading_symbol: 'INFY-EQ' },
+      })
+    }
+
+    if (path === '/api/v1/orders/repeat') {
+      return jsonResponse({
+        draft: {
+          mode: 'contract',
+          instrument: {
+            canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+            exchange: 'NSE_EQ',
+            segment: 'EQUITY',
+            instrument_type: 'EQUITY',
+            symbol_root: 'INFY',
+            display_symbol: 'INFY',
+            underlying: null,
+            expiry: null,
+            strike: null,
+            option_type: null,
+            lot_size: 1,
+            tick_size: 0.05,
+            isin: 'INE009A01021',
+            is_active: true,
+            created_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+          },
+          broker: 'angel',
+          side: 'BUY',
+          quantity: 1,
+          lots: null,
+          product: 'CNC',
+          order_type: 'MARKET',
+          limit_price: null,
+          reference_price: null,
+          intent: {
+            source: 'manual_ui',
+            intent_type: 'ENTRY',
+            trigger_mode: 'MARKET',
+            risk_mode: null,
+            sl_value: null,
+            tp_value: null,
+            trailing_value: null,
+            parent_order_id: 1,
+            linked_position_id: 1,
+            broker_context: 'angel',
+          },
+        },
+      })
+    }
+
+    if (path === '/api/v1/orders/reverse') {
+      return jsonResponse({
+        draft: {
+          mode: 'contract',
+          instrument: {
+            canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+            exchange: 'NSE_EQ',
+            segment: 'EQUITY',
+            instrument_type: 'EQUITY',
+            symbol_root: 'INFY',
+            display_symbol: 'INFY',
+            underlying: null,
+            expiry: null,
+            strike: null,
+            option_type: null,
+            lot_size: 1,
+            tick_size: 0.05,
+            isin: 'INE009A01021',
+            is_active: true,
+            created_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+          },
+          broker: 'angel',
+          side: 'SELL',
+          quantity: 1,
+          lots: null,
+          product: 'CNC',
+          order_type: 'MARKET',
+          limit_price: null,
+          reference_price: null,
+          intent: {
+            source: 'manual_ui',
+            intent_type: 'EXIT',
+            trigger_mode: 'MARKET',
+            risk_mode: null,
+            sl_value: null,
+            tp_value: null,
+            trailing_value: null,
+            parent_order_id: 1,
+            linked_position_id: 1,
+            broker_context: 'angel',
+          },
+        },
+      })
+    }
+
+    if (path === '/api/v1/orders/reconcile') {
+      return jsonResponse({ status: 'ok', message: 'reconcile deferred in ML1' })
+    }
+
+    if (path === '/api/v1/positions') {
+      return jsonResponse({
+        items: [
+          {
+            id: 1,
+            opened_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+            broker: 'angel',
+            canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+            instrument: {
+              canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+              exchange: 'NSE_EQ',
+              segment: 'EQUITY',
+              instrument_type: 'EQUITY',
+              symbol_root: 'INFY',
+              display_symbol: 'INFY',
+              underlying: null,
+              expiry: null,
+              strike: null,
+              option_type: null,
+              lot_size: 1,
+              tick_size: 0.05,
+              isin: 'INE009A01021',
+              is_active: true,
+              created_at: '2026-04-09T00:00:00Z',
+              updated_at: '2026-04-09T00:00:00Z',
+            },
+            side: 'BUY',
+            quantity: 1,
+            lots: null,
+            avg_price: 10,
+            last_price: null,
+            realized_pnl: null,
+            unrealized_pnl: null,
+            mtm: null,
+            linked_orders_count: 1,
+            source: 'manual_ui',
+          },
+        ],
+      })
+    }
+
+    if (path.startsWith('/api/v1/positions/') && (path.endsWith('/squareoff') || path.endsWith('/reverse'))) {
+      return jsonResponse({
+        draft: {
+          mode: 'contract',
+          instrument: {
+            canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+            exchange: 'NSE_EQ',
+            segment: 'EQUITY',
+            instrument_type: 'EQUITY',
+            symbol_root: 'INFY',
+            display_symbol: 'INFY',
+            underlying: null,
+            expiry: null,
+            strike: null,
+            option_type: null,
+            lot_size: 1,
+            tick_size: 0.05,
+            isin: 'INE009A01021',
+            is_active: true,
+            created_at: '2026-04-09T00:00:00Z',
+            updated_at: '2026-04-09T00:00:00Z',
+          },
+          broker: 'angel',
+          side: 'SELL',
+          quantity: 1,
+          lots: null,
+          product: 'CNC',
+          order_type: 'MARKET',
+          limit_price: null,
+          reference_price: null,
+          intent: {
+            source: 'manual_ui',
+            intent_type: 'EXIT',
+            trigger_mode: 'MARKET',
+            risk_mode: null,
+            sl_value: null,
+            tp_value: null,
+            trailing_value: null,
+            parent_order_id: null,
+            linked_position_id: 1,
+            broker_context: 'angel',
+          },
+        },
+      })
+    }
+
+    if (path.startsWith('/api/v1/positions/') && path.endsWith('/refresh')) {
+      return jsonResponse({ status: 'ok', message: 'refresh deferred in ML1' })
     }
 
     return jsonResponse({ detail: 'Not found' }, 404)

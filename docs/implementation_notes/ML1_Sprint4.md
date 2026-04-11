@@ -93,3 +93,76 @@
 ### Next
 - Optional async quote fetch (non-blocking) behind a future `/quotes` API (deferred) to reduce reliance on cached/preview premiums
 - Populate `spotsByUnderlying` from a safe backend quote/spot source once available (deferred)
+
+---
+
+## S4.2.1 Order intent + Orders/Positions workspace stabilization
+
+### Completed
+- Hardened backend order persistence with normalized intent/execution semantics fields (TradingView/webhook-ready):
+  - `source`, `intent_type`, `trigger_mode`, `risk_mode`, optional `sl_value`/`tp_value`/`trailing_value`
+  - linkage: `parent_order_id`, `linked_position_id`, `broker_context`
+  - safe snapshots: `preview_snapshot_json`, `broker_payload_json`, `broker_symbol_resolved`, `lot_size_snapshot`
+- Added broker-neutral `positions` ledger table (local intent-based ledger; live broker reconciliation deferred)
+- Added backend APIs:
+  - `GET /api/v1/orders`, `GET /api/v1/orders/{id}`
+  - `POST /api/v1/orders/repeat`, `POST /api/v1/orders/reverse`, `POST /api/v1/orders/reconcile` (deferred)
+  - `GET /api/v1/positions`
+  - `POST /api/v1/positions/{id}/squareoff`, `POST /api/v1/positions/{id}/reverse` (returns ticket drafts), `POST /api/v1/positions/{id}/refresh` (deferred)
+- Implemented production-grade `Orders` and `Positions` workspaces in the frontend:
+  - filterable tables, latest-first sorting, compact badges, and quick actions
+  - single-click `Repeat` / `Reverse` / `Square off` launching prefilled tickets (contract-driven)
+
+### Important highlights
+- Canonical-first remains the truth layer: UI renders canonical instruments; broker symbols/tokens are stored internally only
+- Multi-source safety: `manual_ui` and future `tv_webhook` share the same tables and intent fields
+- Positions ledger is intentionally conservative: it updates from submitted intents; fill-level accuracy and broker book reconciliation are deferred
+- Migrations remain developer-friendly: SQLite test migrations skip unsupported FK/default-alter operations; Postgres keeps constraints
+
+### Next
+- Add SL/TP/TSL UI inputs and intent persistence (no advanced broker-native placement yet; frozen PRD requires the UX surface)
+- Add broker order/position reconciliation jobs + System Events traces (frozen PRD)
+- Enrich Orders/Positions with safe quote/LTP + PnL calculations (deferred; no websockets yet)
+
+---
+
+## S4.2.1 broker order inclusion (Orders workspace)
+
+### Completed
+- Added persisted user preference `include_broker_orders` (default `true`) and exposed it via `/api/v1/auth/me`
+- Extended `/api/v1/auth/me/preferences` to update `include_broker_orders` (and remains compatible with `last_used_broker`)
+- Implemented backend-driven unified Orders workspace endpoint:
+  - `GET /api/v1/orders/workspace?mode=merged|internal_only|broker_only`
+  - backend fetches internal orders + (optionally) broker orderbooks, normalizes, matches conservatively, and returns one merged dataset
+- Implemented broker orderbook fetch + normalization behind adapters:
+  - Angel One: SmartAPI orderbook (`getOrderBook`) normalization
+  - Zerodha: Kite orderbook (`orders()`) normalization
+- Updated frontend Orders workspace:
+  - persisted `Include broker orders` toggle (server-side preference)
+  - segmented source mode selector (Merged / Internal only / Broker only)
+  - provenance + reconciliation badges, plus graceful broker-warning banner
+
+### Important highlights
+- Broker remains the truth for lifecycle/status; SigmaTraderPRO remains the truth for intent metadata and internal execution context
+- Matching is conservative and merge-only on strong identifiers (`broker + broker_order_id`, then `exchange_order_id`); otherwise broker orders remain separate rows
+- Broker failures never blank the workspace: internal orders still render, and warnings remain non-blocking
+
+### Next
+- Expand matching confidence using additional broker identifiers where safely available (still conservative)
+- Add optional “trade from broker-only row” UX (explicitly deferred; needs safer mapping defaults)
+
+---
+
+## S4.2.1B reconcile + positionbook sync
+
+### Completed
+- Implemented `POST /api/v1/orders/reconcile` to pull broker orderbooks and update internal order lifecycle fields (status/avg price/rejection reason) using strong-id matching only
+- Implemented `POST /api/v1/positions/{id}/refresh` to pull broker positionbook and sync the local positions ledger (bounded, net-position snapshot)
+
+### Important highlights
+- Reconcile is bounded to internal rows: broker-only orders remain broker-only (no auto-import/backfill)
+- Position sync is snapshot-based and FK-safe: missing positions are marked closed by setting `quantity=0` so they no longer render, but rows are retained for linkage
+
+### Next
+- Add a safe “refresh all positions” endpoint + UI (optional)
+- Expand position sync to surface broker order IDs / fill attribution (deferred)
