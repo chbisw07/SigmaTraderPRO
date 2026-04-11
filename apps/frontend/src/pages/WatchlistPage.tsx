@@ -14,7 +14,6 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -40,6 +39,8 @@ const BROKER_OPTIONS = [
 
 type BrokerKey = (typeof BROKER_OPTIONS)[number]['key']
 
+type WatchlistSearchScope = 'all' | 'cash' | 'fno' | 'indices'
+
 function typeLabel(i: instrumentsApi.InstrumentOut | null, fallback: string | null) {
   const t = i?.instrument_type ?? fallback ?? '—'
   if (t === 'OPTION') return 'Option'
@@ -48,6 +49,14 @@ function typeLabel(i: instrumentsApi.InstrumentOut | null, fallback: string | nu
   if (t === 'INDEX') return 'Index'
   if (t === 'EQUITY') return 'Equity'
   return t
+}
+
+function typeBadge(i: instrumentsApi.InstrumentOut): { label: string; className: string } {
+  if (i.instrument_type === 'OPTION') return { label: 'OPT', className: 'bg-violet-500/10 text-violet-700 dark:text-violet-300' }
+  if (i.instrument_type === 'FUTURE') return { label: 'FUT', className: 'bg-amber-500/10 text-amber-700 dark:text-amber-300' }
+  if (i.instrument_type === 'INDEX') return { label: 'IDX', className: 'bg-sky-500/10 text-sky-700 dark:text-sky-300' }
+  if (i.instrument_type === 'ETF') return { label: 'ETF', className: 'bg-teal-500/10 text-teal-700 dark:text-teal-300' }
+  return { label: 'EQ', className: 'bg-slate-500/10 text-slate-700 dark:text-slate-300' }
 }
 
 function formatExpiryHuman(iso: string | null): string {
@@ -71,6 +80,17 @@ function formatStrikeHuman(strike: number | null): string {
     return Number.isInteger(v) ? String(v) : v.toFixed(2)
   }
   return String(strike)
+}
+
+function titleForInstrument(i: instrumentsApi.InstrumentOut) {
+  const root = (i.underlying ?? i.symbol_root).toUpperCase()
+  if (i.instrument_type === 'OPTION') {
+    return `${root} ${formatExpiryHuman(i.expiry)} ${formatStrikeHuman(i.strike)} ${i.option_type ?? ''}`.trim()
+  }
+  if (i.instrument_type === 'FUTURE') {
+    return `${root} ${formatExpiryHuman(i.expiry)} FUT`.trim()
+  }
+  return i.display_symbol
 }
 
 function formatLtp(v: number | null | undefined): string {
@@ -153,6 +173,7 @@ export function WatchlistPage() {
   const [banner, setBanner] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [rowMenuOpenId, setRowMenuOpenId] = useState<number | null>(null)
+  const [scope, setScope] = useState<WatchlistSearchScope>('all')
 
   const selectedBroker = (user?.last_used_broker as BrokerKey | null) ?? null
   const broker = selectedBroker ?? 'angel'
@@ -315,11 +336,51 @@ export function WatchlistPage() {
   const [q, setQ] = useState('')
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [searchFocused, setSearchFocused] = useState(false)
+
   const addSearch = useQuery({
-    queryKey: ['watchlist', 'add', q],
+    queryKey: ['watchlist', 'add', q, scope],
     queryFn: async () => {
       if (!accessToken) return { items: [] }
-      return instrumentsApi.searchInstruments(accessToken, { q, limit: 20 })
+      const trimmed = q.trim()
+      if (!trimmed) return { items: [] }
+
+      if (scope === 'cash') {
+        return instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 25, segment: 'EQUITY' })
+      }
+      if (scope === 'indices') {
+        return instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 25, instrument_type: 'INDEX' })
+      }
+      if (scope === 'fno') {
+        const [futs, opts, idx] = await Promise.all([
+          instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 15, instrument_type: 'FUTURE' }),
+          instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 20, instrument_type: 'OPTION' }),
+          instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 10, instrument_type: 'INDEX' }),
+        ])
+        const map = new Map<string, instrumentsApi.InstrumentOut>()
+        for (const i of [...(futs.items ?? []), ...(opts.items ?? []), ...(idx.items ?? [])]) {
+          map.set(i.canonical_id, i)
+        }
+        const items = Array.from(map.values())
+        const order = (t: instrumentsApi.InstrumentType) =>
+          t === 'FUTURE' ? 0 : t === 'OPTION' ? 1 : t === 'INDEX' ? 2 : 9
+        items.sort((a, b) => {
+          const t = order(a.instrument_type) - order(b.instrument_type)
+          if (t) return t
+          const ea = a.expiry ?? ''
+          const eb = b.expiry ?? ''
+          if (ea !== eb) return ea < eb ? -1 : 1
+          const sa = a.strike ?? 0
+          const sb = b.strike ?? 0
+          if (sa !== sb) return sa - sb
+          const oa = a.option_type ?? ''
+          const ob = b.option_type ?? ''
+          if (oa !== ob) return oa < ob ? -1 : 1
+          return a.display_symbol.localeCompare(b.display_symbol)
+        })
+        return { items }
+      }
+
+      return instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 25 })
     },
     enabled: Boolean(accessToken) && q.trim().length > 0,
   })
@@ -385,7 +446,43 @@ export function WatchlistPage() {
     setFnoDialogOpen(true)
   }
 
+  const openTradeInstrument = (inst: instrumentsApi.InstrumentOut, side: ordersApi.OrderSide) => {
+    const keyBits = [inst.canonical_id, broker, side].join(':')
+    setDialogKey(keyBits)
+
+    if (inst.segment === 'EQUITY' && (inst.instrument_type === 'EQUITY' || inst.instrument_type === 'ETF')) {
+      setStockLaunch({
+        mode: 'contract',
+        instrument: inst,
+        broker,
+        prefill: { side, quantity: 1 },
+      })
+      setStockDialogOpen(true)
+      return
+    }
+
+    if (inst.instrument_type === 'INDEX') {
+      const u = (inst.underlying ?? inst.symbol_root ?? inst.display_symbol).trim().toUpperCase()
+      setFnoLaunch({ mode: 'manual', broker, prefill: { underlying: u, side } })
+      setFnoDialogOpen(true)
+      return
+    }
+
+    setFnoLaunch({
+      mode: 'contract',
+      instrument: inst,
+      broker,
+      prefill: { side, lots: 1 },
+    })
+    setFnoDialogOpen(true)
+  }
+
   const items = useMemo(() => watchlistItems.data?.items ?? [], [watchlistItems.data])
+  const watchlistCanonicalSet = useMemo(() => {
+    const set = new Set<string>()
+    for (const i of items) if (i.canonical_id) set.add(i.canonical_id)
+    return set
+  }, [items])
   const brokerState = brokerStatus.data?.find((b) => b.broker === broker) ?? null
   const watchlistTabs = useMemo(() => watchlists.data?.items ?? [], [watchlists.data])
 
@@ -538,7 +635,11 @@ export function WatchlistPage() {
                   inputRef.current = el
                 }}
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value
+                  setQ(next)
+                  if (!next.trim()) setScope('all')
+                }}
                 onFocus={() => setSearchFocused(true)}
                 onBlur={() => {
                   window.setTimeout(() => setSearchFocused(false), 120)
@@ -550,43 +651,145 @@ export function WatchlistPage() {
                 }
                 aria-label="Watchlist add search"
               />
+              {q.trim() ? (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setQ('')
+                    inputRef.current?.focus()
+                  }}
+                >
+                  ×
+                </Button>
+              ) : null}
             </div>
 
             {searchFocused && q.trim().length > 0 ? (
-              <div
-                className="absolute left-0 right-0 top-[46px] z-10 max-h-[320px] overflow-auto rounded-md border bg-card shadow-sm"
-                onMouseDown={(e) => e.preventDefault()}
-              >
+              <div className="mt-2 flex items-center gap-1">
+                {(
+                  [
+                    { key: 'all', label: 'All' },
+                    { key: 'indices', label: 'Indices' },
+                    { key: 'cash', label: 'Cash' },
+                    { key: 'fno', label: 'F&O' },
+                  ] as const
+                ).map((t) => (
+                  <Button
+                    key={t.key}
+                    type="button"
+                    size="sm"
+                    variant={scope === t.key ? 'secondary' : 'ghost'}
+                    onClick={() => setScope(t.key)}
+                  >
+                    {t.label}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          {searchFocused && q.trim().length > 0 ? (
+            <div className="rounded-md border bg-card overflow-hidden">
+              <div className="max-h-[420px] overflow-auto">
                 {addSearch.isFetching ? (
                   <div className="px-3 py-3 text-sm text-muted-foreground">Searching…</div>
                 ) : null}
-                {(addSearch.data?.items ?? []).map((i) => (
-                  <button
-                    key={i.canonical_id}
-                    type="button"
-                    className="flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left text-sm hover:bg-accent/20"
-                    onClick={() => {
-                      if (!activeId) return
-                      void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id })
-                      setQ('')
-                      inputRef.current?.focus()
-                    }}
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{i.display_symbol}</div>
-                      {!isCompact ? (
-                        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{i.canonical_id}</div>
-                      ) : null}
+                {(addSearch.data?.items ?? []).map((i) => {
+                  const badge = typeBadge(i)
+                  const already = watchlistCanonicalSet.has(i.canonical_id)
+                  return (
+                    <div
+                      key={i.canonical_id}
+                      className="group flex items-center justify-between gap-3 border-b px-3 py-2 hover:bg-accent/20"
+                      onMouseDown={(e) => e.preventDefault()}
+                    >
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 text-left"
+                        onClick={() => {
+                          if (!activeId) return
+                          if (already) return
+                          void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id })
+                          setQ('')
+                          inputRef.current?.focus()
+                        }}
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className={cn('flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold', badge.className)}>
+                            {badge.label}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate font-medium">{titleForInstrument(i)}</div>
+                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                              {i.exchange} • {typeLabel(i, null)}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+
+                      <div
+                        className={cn(
+                          'flex items-center gap-1 opacity-0 transition-opacity',
+                          'group-hover:opacity-100 group-focus-within:opacity-100',
+                        )}
+                      >
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="secondary"
+                          className="h-7 w-7 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
+                          onClick={() => openTradeInstrument(i, 'BUY')}
+                          aria-label="Buy"
+                          title="Buy"
+                        >
+                          B
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="secondary"
+                          className="h-7 w-7 bg-red-500/10 hover:bg-red-500/15 text-red-800 dark:text-red-200"
+                          onClick={() => openTradeInstrument(i, 'SELL')}
+                          aria-label="Sell"
+                          title="Sell"
+                        >
+                          S
+                        </Button>
+                      </div>
+
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        aria-label={already ? 'Already in watchlist' : 'Add to watchlist'}
+                        disabled={already || !activeId}
+                        onClick={() => {
+                          if (!activeId) return
+                          if (already) return
+                          void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id })
+                          setQ('')
+                          inputRef.current?.focus()
+                        }}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{typeLabel(i, null)}</Badge>
-                      <Badge variant="outline">{i.exchange}</Badge>
-                    </div>
-                  </button>
-                ))}
+                  )
+                })}
+
+                {!addSearch.isFetching && (addSearch.data?.items ?? []).length === 0 ? (
+                  <div className="px-3 py-4 text-sm text-muted-foreground">No matches.</div>
+                ) : null}
+
                 <button
                   type="button"
                   className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent/20"
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
                     if (!activeId) return
                     const u = q.trim().toUpperCase()
@@ -606,15 +809,10 @@ export function WatchlistPage() {
                     <Plus className="h-4 w-4" />
                   </div>
                 </button>
-                {!addSearch.isFetching && (addSearch.data?.items ?? []).length === 0 ? (
-                  <div className="px-3 py-4 text-sm text-muted-foreground">No matches.</div>
-                ) : null}
               </div>
-            ) : null}
-          </div>
-        </CardHeader>
+            </div>
+          ) : null}
 
-        <CardContent>
           {!items.length ? (
             <div className="rounded-md border bg-muted/20 p-4 text-sm">
               <div className="font-medium">Empty watchlist</div>

@@ -204,3 +204,4 @@
 - Added a bounded broker-quote snapshot API (`GET /api/v1/quotes`) used by the persistent Watchlist to show LTP + change/% change when broker is connected.
 - Quote fetching is canonical-first (requested by `canonical_id`) and resolves broker tokens internally; no broker symbols are exposed as the primary UI model.
 - Quotes are cached in Redis with short TTL (lean market data philosophy); UI degrades gracefully to `—` when unavailable.
+- Refined the Watchlist embedded search results to be broker-inspired (scoped tabs + compact result rows + quick B/S) while preserving SigmaTraderPRO styling and canonical-first contracts.
