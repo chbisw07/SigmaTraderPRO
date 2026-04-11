@@ -205,3 +205,43 @@
 - Quote fetching is canonical-first (requested by `canonical_id`) and resolves broker tokens internally; no broker symbols are exposed as the primary UI model.
 - Quotes are cached in Redis with short TTL (lean market data philosophy); UI degrades gracefully to `—` when unavailable.
 - Refined the Watchlist embedded search results to be broker-inspired (scoped tabs + compact result rows + quick B/S) while preserving SigmaTraderPRO styling and canonical-first contracts.
+
+---
+
+## S4.3 Dispatch gating + correlation + failure states (Acceptance complete)
+
+### Completed
+- Added centralized pre-dispatch gating layer for manual orders (cash + F&O):
+  - offline / not dispatchable blocks (broker not configured/enabled/not connected)
+  - stale-session blocks (broker session validity model)
+  - operator kill-switch: `ORDERS_DISPATCH_ENABLED=false`
+- Expanded order lifecycle state model to explicitly represent:
+  - `BLOCKED` (dispatch intentionally not attempted)
+  - `DISPATCH_FAILED` (attempted, failed before broker ack)
+  - `ACKNOWLEDGED` (broker accepted request)
+- Persisted structured block/failure reason surfaces + correlation ID on `orders`:
+  - `correlation_id`
+  - `blocked_reason_code` / `blocked_reason_message`
+  - `failure_reason_code` / `failure_reason_message`
+- Ensured correlation ID is returned to UI/API and is stable across the order flow lifecycle.
+
+### System Events (Operator observability)
+- Implemented durable `system_events` persistence + API and exposed it on the existing System Events workspace (`/system-events`).
+- Emitted operator-friendly lifecycle events for manual dispatch under category `order_dispatch`:
+  - `INFO`  — dispatch started
+  - `WARNING` — dispatch blocked
+  - `ERROR` — dispatch failed (pre-ack) or broker rejected
+  - `INFO`  — broker acknowledged
+- Each event includes correlation ID and useful metadata (order id, broker, symbol/trading symbol, reason codes/messages, broker order id when available).
+
+### Validated flow example (same correlation ID)
+- `INFO    order_dispatch  Order dispatch started: Angel One   correlation_id=<...>`
+- `WARNING order_dispatch  Order dispatch blocked: broker session stale  correlation_id=<...>` (blocked path)
+- `ERROR   order_dispatch  Order dispatch failed before broker acknowledgement  correlation_id=<...>` (failure path)
+- `INFO    order_dispatch  Order acknowledged by Angel One  correlation_id=<...>` (healthy path)
+
+### Key files
+- Backend gating + state handling: `apps/backend/app/services/dispatch_gating_service.py`
+- Order placement flow + event emission: `apps/backend/app/services/order_service.py`
+- System events: `apps/backend/app/services/system_events_service.py`, `apps/backend/app/api/v1/system_events.py`
+- Migrations: `apps/backend/alembic/versions/0010_dispatch_gating_fields.py`, `apps/backend/alembic/versions/0011_system_events.py`

@@ -75,6 +75,12 @@ class Settings(BaseSettings):
         validation_alias="ANGEL_INSTRUMENT_MASTER_URL",
     )
 
+    # S4.3 operator kill-switch (default: enabled). When disabled, manual order
+    # submissions are intentionally blocked before any broker dispatch attempt.
+    orders_dispatch_enabled: bool = Field(
+        default=True, validation_alias="ORDERS_DISPATCH_ENABLED"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

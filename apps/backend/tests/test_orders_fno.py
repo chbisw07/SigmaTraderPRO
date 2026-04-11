@@ -13,6 +13,7 @@ import app.models.instrument  # noqa: F401
 import app.models.instrument_mapping  # noqa: F401
 import app.models.order  # noqa: F401
 import app.models.position  # noqa: F401
+import app.models.system_event  # noqa: F401
 import app.models.user  # noqa: F401
 from app.core.config import settings
 from app.core.crypto import encrypt_json
@@ -24,6 +25,7 @@ from app.models.base import Base
 from app.models.broker_connection import BrokerConnection
 from app.models.instrument import Instrument
 from app.models.instrument_mapping import InstrumentMapping
+from app.models.order import Order
 from app.models.user import User
 
 
@@ -314,8 +316,74 @@ def test_fno_create_places_order_with_mocked_angel(
     )
     assert resp.status_code == 200
     data = resp.json()
+    assert data["status"] == "ACKNOWLEDGED"
     assert data["broker_order_id"] == "ANGEL_FNO_ORDER_1"
     assert data["preview"]["quantity"] == 50
+    assert data["correlation_id"]
+
+    created = db_session.query(Order).filter(Order.id == data["order_id"]).one()
+    assert created.correlation_id == data["correlation_id"]
+    assert created.blocked_reason_code is None
+    assert created.failure_reason_code is None
+
+
+def test_fno_create_blocks_when_session_missing(
+    db_session: Session, client: TestClient, monkeypatch
+) -> None:
+    user = _create_user(db_session, email="u_block_fno@example.com", password="pass123")
+
+    # Configured + enabled, but missing session.
+    conn = BrokerConnection(
+        user_id=user.id,
+        broker_key="angel",
+        is_enabled=True,
+        credentials_enc=encrypt_json(
+            {"api_key": "A", "client_code": "C", "password": "P"},
+            key=settings.broker_encryption_key,
+        ),
+        session_enc=None,
+        session_day=None,
+        last_connected_at=None,
+        last_error=None,
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    inst = _create_option(db_session, strike=2030000, option_type="CE")
+    _map_instrument(
+        db_session,
+        inst=inst,
+        broker_key="angel",
+        broker_instrument_id="20002",
+        broker_trading_symbol="NIFTY05MAY2620300CE",
+    )
+
+    def _no_dispatch(**_):  # type: ignore[no-untyped-def]
+        raise AssertionError("dispatch should not be attempted")
+
+    monkeypatch.setattr("app.brokers.angel_adapter.place_order", _no_dispatch)
+
+    access = _login(client, "u_block_fno@example.com", "pass123")
+    resp = client.post(
+        "/api/v1/orders/fno",
+        json={
+            "broker": "angel",
+            "instrument_type": "OPTION",
+            "underlying": "NIFTY",
+            "expiry": "2026-05-05",
+            "strike": 2030000,
+            "option_type": "CE",
+            "side": "BUY",
+            "lots": 1,
+            "product": "NRML",
+            "order_type": "MARKET",
+        },
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "BLOCKED"
+    assert data["blocked_reason_code"] == "BROKER_SESSION_MISSING"
 
 
 def test_fno_rejects_invalid_product(db_session: Session, client: TestClient) -> None:

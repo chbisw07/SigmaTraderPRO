@@ -342,3 +342,41 @@ This document is the **single milestone-level implementation memory artifact** f
 
 ### Notes / Deviations
 - Premium hydration currently uses cached values (selected row context and last preview premium). Live quotes are intentionally deferred until a dedicated backend quote endpoint exists.
+
+## 2026-04-11 — Sprint 4 / S4.3 — Dispatch gating + correlation + failure states (Acceptance complete)
+### Implemented
+- Centralized pre-dispatch gating layer for manual orders (cash + F&O):
+  - blocks dispatch when broker is not dispatchable (not configured/disabled/not connected)
+  - blocks stale sessions (broker session-day validity model)
+  - operator kill-switch: `ORDERS_DISPATCH_ENABLED=false`
+- Explicit lifecycle state model:
+  - `BLOCKED` (intentional gate stop; no broker call)
+  - `DISPATCH_FAILED` (attempted, failed pre-ack)
+  - `ACKNOWLEDGED` (broker accepted)
+- Persisted structured reason surfaces + correlation ID on `orders`:
+  - `correlation_id`
+  - `blocked_reason_code/message`
+  - `failure_reason_code/message`
+- Added durable System Events pipeline and made dispatch lifecycle operator-visible under `order_dispatch` category:
+  - `INFO` dispatch started
+  - `WARNING` blocked
+  - `ERROR` failed / rejected
+  - `INFO` acknowledged
+
+### Validated lifecycle example (same correlation ID)
+- `INFO    | order_dispatch | Order dispatch started: Angel One | <correlation_id>`
+- `WARNING | order_dispatch | Order dispatch blocked: broker session stale | <correlation_id>`
+- `ERROR   | order_dispatch | Order dispatch failed before broker acknowledgement | <correlation_id>`
+- `INFO    | order_dispatch | Order acknowledged by Angel One | <correlation_id>`
+
+### Files / Modules
+- `apps/backend/app/services/dispatch_gating_service.py`
+- `apps/backend/app/services/order_service.py`
+- `apps/backend/app/services/system_events_service.py`
+- `apps/backend/app/api/v1/system_events.py`
+- `apps/frontend/src/pages/SystemEventsPage.tsx`
+
+### API / DB / UI Changes
+- API: added `GET/POST /api/v1/system-events` surfaces for System Events workspace.
+- DB: added `system_events` table (migration `0011_system_events`) and `orders` dispatch fields (migration `0010_dispatch_gating_fields`).
+- UI: System Events workspace surfaces dispatch lifecycle and correlation IDs for operational traceability.

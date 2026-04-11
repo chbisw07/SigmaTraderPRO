@@ -13,6 +13,7 @@ import app.models.instrument  # noqa: F401
 import app.models.instrument_mapping  # noqa: F401
 import app.models.order  # noqa: F401
 import app.models.position  # noqa: F401
+import app.models.system_event  # noqa: F401
 import app.models.user  # noqa: F401
 from app.core.config import settings
 from app.core.crypto import encrypt_json
@@ -179,7 +180,7 @@ def test_orders_and_positions_endpoints_smoke(
     items = resp2.json()["items"]
     assert len(items) == 1
     assert items[0]["canonical_id"] == inst.canonical_id
-    assert items[0]["status"] == "PENDING"
+    assert items[0]["status"] == "ACKNOWLEDGED"
 
     # Order detail includes snapshots.
     resp3 = client.get(

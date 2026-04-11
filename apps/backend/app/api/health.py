@@ -38,6 +38,7 @@ def readiness() -> JSONResponse:
                 "instruments",
                 "orders",
                 "positions",
+                "system_events",
             ]
             missing: list[str] = []
             for name in required:

@@ -19,7 +19,9 @@ function StatusBadge({ status }: { status: string | null }) {
   const cls =
     s === 'EXECUTED'
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-      : s === 'REJECTED' || s === 'FAILED'
+      : s === 'BLOCKED'
+        ? 'border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+        : s === 'REJECTED' || s === 'FAILED' || s === 'DISPATCH_FAILED'
         ? 'border-destructive/30 bg-destructive/10 text-destructive'
         : s === 'CANCELLED'
           ? 'border-muted-foreground/30 bg-muted/30 text-muted-foreground'
@@ -296,7 +298,7 @@ export function OrdersPage() {
             className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
           >
             <option value="">All statuses</option>
-            {['PENDING', 'OPEN', 'EXECUTED', 'PARTIAL', 'CANCELLED', 'REJECTED', 'FAILED', 'SL_EXECUTED', 'TARGET_EXECUTED'].map((s) => (
+            {['ACKNOWLEDGED', 'PENDING', 'OPEN', 'EXECUTED', 'PARTIAL', 'CANCELLED', 'BLOCKED', 'DISPATCH_FAILED', 'REJECTED', 'FAILED', 'SL_EXECUTED', 'TARGET_EXECUTED'].map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>
@@ -374,7 +376,15 @@ export function OrdersPage() {
                     <td className="px-3 py-2 tabular-nums">{o.avg_price ?? '—'}</td>
                     <td className="px-3 py-2">
                       <StatusBadge status={o.status} />
-                      {o.rejection_reason ? <div className="mt-1 max-w-[260px] truncate text-[11px] text-destructive">{o.rejection_reason}</div> : null}
+                      {o.blocked_reason_message ? (
+                        <div className="mt-1 max-w-[260px] truncate text-[11px] text-amber-800 dark:text-amber-200">
+                          {o.blocked_reason_message}
+                        </div>
+                      ) : o.failure_reason_message || o.rejection_reason ? (
+                        <div className="mt-1 max-w-[260px] truncate text-[11px] text-destructive">
+                          {o.failure_reason_message ?? o.rejection_reason}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{o.broker_order_id ?? '—'}</td>
                     <td className="px-3 py-2">

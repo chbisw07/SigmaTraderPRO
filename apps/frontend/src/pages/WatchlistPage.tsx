@@ -328,7 +328,7 @@ export function WatchlistPage() {
     for (const o of orders.data?.items ?? []) {
       if (!o.canonical_id) continue
       const s = (o.status ?? '').toUpperCase()
-      if (['PENDING', 'OPEN', 'PARTIAL'].includes(s)) set.add(o.canonical_id)
+      if (['ACKNOWLEDGED', 'PENDING', 'OPEN', 'PARTIAL'].includes(s)) set.add(o.canonical_id)
     }
     return set
   }, [orders.data])

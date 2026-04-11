@@ -77,6 +77,17 @@ class Order(Base):
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # S4.3 dispatch correlation + explicit block/failure reason surfaces.
+    correlation_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    blocked_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    blocked_reason_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_reason_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dispatch_tags_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    dispatch_diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

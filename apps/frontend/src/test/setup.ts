@@ -18,6 +18,8 @@ type MockWatchlistItem = {
   display_symbol: string
 }
 
+type MockApiOverride = { status?: number; body: unknown }
+
 let mockWatchlists: MockWatchlist[] = [{ id: 1, name: 'Default', is_default: true }]
 let mockWatchlistItems: MockWatchlistItem[] = []
 let nextWatchlistId = 2
@@ -624,10 +626,18 @@ beforeAll(() => {
     const method = (init?.method ?? 'GET').toUpperCase()
 
     if (path === '/api/v1/orders' && method === 'POST') {
+      const override = (globalThis as unknown as { __mockApiOverrides?: { ordersCreate?: MockApiOverride } }).__mockApiOverrides
+        ?.ordersCreate
+      if (override) return jsonResponse(override.body, override.status ?? 200)
       return jsonResponse({
         order_id: 1,
-        status: 'submitted',
+        status: 'ACKNOWLEDGED',
         broker_order_id: 'BROKER_ORDER_1',
+        correlation_id: 'CORR_TEST_1',
+        blocked_reason_code: null,
+        blocked_reason_message: null,
+        failure_reason_code: null,
+        failure_reason_message: null,
         preview: {
           instrument: {
             canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
@@ -663,10 +673,18 @@ beforeAll(() => {
     }
 
     if (path === '/api/v1/orders/fno') {
+      const override = (globalThis as unknown as { __mockApiOverrides?: { ordersFnoCreate?: MockApiOverride } }).__mockApiOverrides
+        ?.ordersFnoCreate
+      if (override) return jsonResponse(override.body, override.status ?? 200)
       return jsonResponse({
         order_id: 2,
-        status: 'submitted',
+        status: 'ACKNOWLEDGED',
         broker_order_id: 'BROKER_FNO_ORDER_1',
+        correlation_id: 'CORR_TEST_2',
+        blocked_reason_code: null,
+        blocked_reason_message: null,
+        failure_reason_code: null,
+        failure_reason_message: null,
         preview: {
           instrument: {
             canonical_id: 'NSE_FNO:OPTION:OPTION:NIFTY:2026-05-05:2010000:CE',
@@ -700,6 +718,28 @@ beforeAll(() => {
           warnings: [],
         },
       })
+    }
+
+    if (path === '/api/v1/system-events' && method === 'GET') {
+      return jsonResponse({
+        items: [
+          {
+            id: 1,
+            created_at: '2026-04-11T15:00:00Z',
+            level: 'WARNING',
+            category: 'order_dispatch',
+            message: 'Order dispatch blocked: broker session stale',
+            correlation_id: 'CORR_EVENT_1',
+            broker: 'angel',
+            symbol: 'INFY-EQ',
+            metadata: { order_id: 1, reason_code: 'BROKER_SESSION_STALE' },
+          },
+        ],
+      })
+    }
+
+    if (path === '/api/v1/system-events/cleanup') {
+      return jsonResponse({ status: 'ok', deleted: 1 })
     }
 
     if (path === '/api/v1/orders' && method === 'GET') {
@@ -1045,6 +1085,7 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.clearAllMocks()
+  ;(globalThis as unknown as { __mockApiOverrides?: unknown }).__mockApiOverrides = undefined
   resetWatchlists()
   localStorage.clear()
 })

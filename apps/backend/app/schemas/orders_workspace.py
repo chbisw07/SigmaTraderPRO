@@ -61,6 +61,11 @@ class OrdersWorkspaceRow(BaseModel):
 
     status: OrderStatus | None = None
     rejection_reason: str | None = None
+    correlation_id: str | None = None
+    blocked_reason_code: str | None = None
+    blocked_reason_message: str | None = None
+    failure_reason_code: str | None = None
+    failure_reason_message: str | None = None
 
     placed_at: datetime | None = None
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
@@ -8,8 +9,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.brokers.angel_client import AngelOrderError
-from app.brokers.zerodha_client import ZerodhaOrderError
 from app.core.logger import get_logger, log_event
 from app.db.session import get_db
 from app.models.instrument import Instrument
@@ -109,6 +108,11 @@ def _order_out(order: Order, instrument: Instrument | None) -> OrderOut:
         status=_coerce_status(order.status),
         broker_order_id=order.broker_order_id,
         rejection_reason=order.error_message,
+        correlation_id=getattr(order, "correlation_id", None),
+        blocked_reason_code=getattr(order, "blocked_reason_code", None),
+        blocked_reason_message=getattr(order, "blocked_reason_message", None),
+        failure_reason_code=getattr(order, "failure_reason_code", None),
+        failure_reason_message=getattr(order, "failure_reason_message", None),
         source=OrderSource(order.source or OrderSource.manual_ui.value),
         intent_type=OrderIntentType(order.intent_type or OrderIntentType.ENTRY.value),
         trigger_mode=OrderTriggerMode(
@@ -213,6 +217,20 @@ def create(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> StockOrderCreateResponse:
+    correlation_id = payload.correlation_id or str(uuid4())
+    log_event(
+        logger,
+        "order_submission_started",
+        category="orders",
+        event_type="create",
+        user_id=current_user.id,
+        broker=payload.broker.value,
+        instrument_key=payload.canonical_id,
+        action="create",
+        correlation_id=correlation_id,
+        status="started",
+    )
+
     try:
         preview = order_service.preview_stock_order(
             db,
@@ -240,32 +258,16 @@ def create(
         ) from exc
 
     try:
-        order, result = order_service.place_stock_order(
+        order, result, gate = order_service.place_stock_order(
             db,
             user=current_user,
             preview=preview,
+            correlation_id=correlation_id,
+            dispatch_tags=payload.dispatch_tags,
         )
     except OrderDependencyError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except (AngelOrderError, ZerodhaOrderError) as exc:
-        # Broker-side rejection (market closed, invalid price, insufficient funds, etc.)
-        log_event(
-            logger,
-            "order_rejected",
-            category="orders",
-            event_type="create",
-            user_id=current_user.id,
-            broker=payload.broker.value,
-            instrument_key=payload.canonical_id,
-            action="create",
-            status="rejected",
-            error=str(exc),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
     except SQLAlchemyError as exc:
@@ -318,19 +320,56 @@ def create(
             detail="Broker order placement failed",
         ) from exc
 
-    log_event(
-        logger,
-        "order_created",
-        category="orders",
-        event_type="create",
-        user_id=current_user.id,
-        broker=payload.broker.value,
-        instrument_key=payload.canonical_id,
-        action="create",
-        status="ok",
-        order_id=order.id,
-        broker_order_id=result.broker_order_id,
-    )
+    outcome_status = _coerce_status(order.status)
+    if outcome_status == OrderStatus.BLOCKED:
+        log_event(
+            logger,
+            "order_blocked",
+            category="orders",
+            event_type="create",
+            user_id=current_user.id,
+            broker=payload.broker.value,
+            instrument_key=payload.canonical_id,
+            action="create",
+            status="blocked",
+            order_id=order.id,
+            correlation_id=correlation_id,
+            reason_code=getattr(order, "blocked_reason_code", None),
+        )
+    elif outcome_status in {
+        OrderStatus.DISPATCH_FAILED,
+        OrderStatus.REJECTED,
+        OrderStatus.FAILED,
+    }:
+        log_event(
+            logger,
+            "order_dispatch_failed",
+            category="orders",
+            event_type="create",
+            user_id=current_user.id,
+            broker=payload.broker.value,
+            instrument_key=payload.canonical_id,
+            action="create",
+            status="failed",
+            order_id=order.id,
+            correlation_id=correlation_id,
+            reason_code=getattr(order, "failure_reason_code", None),
+        )
+    else:
+        log_event(
+            logger,
+            "order_acknowledged",
+            category="orders",
+            event_type="create",
+            user_id=current_user.id,
+            broker=payload.broker.value,
+            instrument_key=payload.canonical_id,
+            action="create",
+            status="ok",
+            order_id=order.id,
+            broker_order_id=getattr(order, "broker_order_id", None),
+            correlation_id=correlation_id,
+        )
 
     audit = getattr(request.app.state, "csv_audit", None)
     if audit:
@@ -340,18 +379,21 @@ def create(
             category="orders",
             event_type="create",
             message="order_created",
+            correlation_id=correlation_id,
             user_id=str(current_user.id),
             broker=payload.broker.value,
             instrument_key=payload.canonical_id,
             action="create",
-            status="ok",
+            status=str(outcome_status.value if outcome_status else "unknown").lower(),
             details={
                 "order_id": order.id,
-                "broker_order_id": result.broker_order_id,
+                "broker_order_id": getattr(order, "broker_order_id", None),
                 "side": payload.side.value,
                 "quantity": payload.quantity,
                 "product": payload.product.value,
                 "order_type": payload.order_type.value,
+                "gate_allowed": getattr(gate, "allowed", None),
+                "gate_reason_code": getattr(gate, "reason_code", None),
             },
         )
 
@@ -376,8 +418,13 @@ def create(
 
     return StockOrderCreateResponse(
         order_id=order.id,
-        status=OrderStatus.PENDING,
-        broker_order_id=result.broker_order_id,
+        status=outcome_status or OrderStatus.PENDING,
+        broker_order_id=getattr(order, "broker_order_id", None),
+        correlation_id=correlation_id,
+        blocked_reason_code=getattr(order, "blocked_reason_code", None),
+        blocked_reason_message=getattr(order, "blocked_reason_message", None),
+        failure_reason_code=getattr(order, "failure_reason_code", None),
+        failure_reason_message=getattr(order, "failure_reason_message", None),
         preview=preview_response,
     )
 
@@ -479,6 +526,20 @@ def create_fno(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FnoOrderCreateResponse:
+    correlation_id = payload.correlation_id or str(uuid4())
+    log_event(
+        logger,
+        "order_submission_started",
+        category="orders",
+        event_type="create",
+        user_id=current_user.id,
+        broker=payload.broker.value,
+        instrument_key=str(payload.underlying),
+        action="create_fno",
+        correlation_id=correlation_id,
+        status="started",
+    )
+
     try:
         preview = order_service.preview_fno_order(
             db,
@@ -510,31 +571,16 @@ def create_fno(
         ) from exc
 
     try:
-        order, result = order_service.place_fno_order(
+        order, result, gate = order_service.place_fno_order(
             db,
             user=current_user,
             preview=preview,
+            correlation_id=correlation_id,
+            dispatch_tags=payload.dispatch_tags,
         )
     except OrderDependencyError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except (AngelOrderError, ZerodhaOrderError) as exc:
-        log_event(
-            logger,
-            "order_rejected",
-            category="orders",
-            event_type="create",
-            user_id=current_user.id,
-            broker=payload.broker.value,
-            instrument_key=preview.instrument.canonical_id,
-            action="create",
-            status="rejected",
-            error=str(exc),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
     except SQLAlchemyError as exc:
@@ -587,19 +633,56 @@ def create_fno(
             detail="Broker order placement failed",
         ) from exc
 
-    log_event(
-        logger,
-        "order_created",
-        category="orders",
-        event_type="create",
-        user_id=current_user.id,
-        broker=payload.broker.value,
-        instrument_key=preview.instrument.canonical_id,
-        action="create",
-        status="ok",
-        order_id=order.id,
-        broker_order_id=result.broker_order_id,
-    )
+    outcome_status = _coerce_status(order.status)
+    if outcome_status == OrderStatus.BLOCKED:
+        log_event(
+            logger,
+            "order_blocked",
+            category="orders",
+            event_type="create",
+            user_id=current_user.id,
+            broker=payload.broker.value,
+            instrument_key=preview.instrument.canonical_id,
+            action="create_fno",
+            status="blocked",
+            order_id=order.id,
+            correlation_id=correlation_id,
+            reason_code=getattr(order, "blocked_reason_code", None),
+        )
+    elif outcome_status in {
+        OrderStatus.DISPATCH_FAILED,
+        OrderStatus.REJECTED,
+        OrderStatus.FAILED,
+    }:
+        log_event(
+            logger,
+            "order_dispatch_failed",
+            category="orders",
+            event_type="create",
+            user_id=current_user.id,
+            broker=payload.broker.value,
+            instrument_key=preview.instrument.canonical_id,
+            action="create_fno",
+            status="failed",
+            order_id=order.id,
+            correlation_id=correlation_id,
+            reason_code=getattr(order, "failure_reason_code", None),
+        )
+    else:
+        log_event(
+            logger,
+            "order_acknowledged",
+            category="orders",
+            event_type="create",
+            user_id=current_user.id,
+            broker=payload.broker.value,
+            instrument_key=preview.instrument.canonical_id,
+            action="create_fno",
+            status="ok",
+            order_id=order.id,
+            broker_order_id=getattr(order, "broker_order_id", None),
+            correlation_id=correlation_id,
+        )
 
     audit = getattr(request.app.state, "csv_audit", None)
     if audit:
@@ -609,19 +692,22 @@ def create_fno(
             category="orders",
             event_type="create",
             message="order_created_fno",
+            correlation_id=correlation_id,
             user_id=str(current_user.id),
             broker=payload.broker.value,
             instrument_key=preview.instrument.canonical_id,
             action="create",
-            status="ok",
+            status=str(outcome_status.value if outcome_status else "unknown").lower(),
             details={
                 "order_id": order.id,
-                "broker_order_id": result.broker_order_id,
+                "broker_order_id": getattr(order, "broker_order_id", None),
                 "side": payload.side.value,
                 "lots": payload.lots,
                 "quantity": preview.request.quantity,
                 "product": payload.product.value,
                 "order_type": payload.order_type.value,
+                "gate_allowed": getattr(gate, "allowed", None),
+                "gate_reason_code": getattr(gate, "reason_code", None),
             },
         )
 
@@ -647,8 +733,13 @@ def create_fno(
 
     return FnoOrderCreateResponse(
         order_id=order.id,
-        status=OrderStatus.PENDING,
-        broker_order_id=result.broker_order_id,
+        status=outcome_status or OrderStatus.PENDING,
+        broker_order_id=getattr(order, "broker_order_id", None),
+        correlation_id=correlation_id,
+        blocked_reason_code=getattr(order, "blocked_reason_code", None),
+        blocked_reason_message=getattr(order, "blocked_reason_message", None),
+        failure_reason_code=getattr(order, "failure_reason_code", None),
+        failure_reason_message=getattr(order, "failure_reason_message", None),
         preview=preview_response,
     )
 

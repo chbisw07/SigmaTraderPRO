@@ -370,6 +370,19 @@ class OrdersWorkspaceService:
                         rejection_reason=(
                             er.rejection_reason or match.order.error_message
                         ),
+                        correlation_id=getattr(match.order, "correlation_id", None),
+                        blocked_reason_code=getattr(
+                            match.order, "blocked_reason_code", None
+                        ),
+                        blocked_reason_message=getattr(
+                            match.order, "blocked_reason_message", None
+                        ),
+                        failure_reason_code=getattr(
+                            match.order, "failure_reason_code", None
+                        ),
+                        failure_reason_message=getattr(
+                            match.order, "failure_reason_message", None
+                        ),
                         placed_at=placed_at,
                         source=(
                             OrderSource(match.order.source)
@@ -411,6 +424,11 @@ class OrdersWorkspaceService:
                             avg_price=er.avg_price,
                             status=er.status,
                             rejection_reason=er.rejection_reason,
+                            correlation_id=None,
+                            blocked_reason_code=None,
+                            blocked_reason_message=None,
+                            failure_reason_code=None,
+                            failure_reason_message=None,
                             placed_at=placed_at,
                             source=None,
                             intent_type=None,
@@ -456,6 +474,19 @@ class OrdersWorkspaceService:
                         ),
                         status=_coerce_status(ir.order.status),
                         rejection_reason=ir.order.error_message,
+                        correlation_id=getattr(ir.order, "correlation_id", None),
+                        blocked_reason_code=getattr(
+                            ir.order, "blocked_reason_code", None
+                        ),
+                        blocked_reason_message=getattr(
+                            ir.order, "blocked_reason_message", None
+                        ),
+                        failure_reason_code=getattr(
+                            ir.order, "failure_reason_code", None
+                        ),
+                        failure_reason_message=getattr(
+                            ir.order, "failure_reason_message", None
+                        ),
                         placed_at=placed_at,
                         source=(
                             OrderSource(ir.order.source) if ir.order.source else None

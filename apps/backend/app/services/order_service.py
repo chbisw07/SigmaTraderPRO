@@ -6,7 +6,6 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from app.brokers.angel_client import AngelOrderError
-from app.brokers.base import BrokerError
 from app.brokers.types import BrokerKey
 from app.brokers.zerodha_client import ZerodhaOrderError
 from app.instruments.types import Exchange, InstrumentType, OptionType
@@ -30,8 +29,37 @@ from app.orders.types import (
     RiskMode,
 )
 from app.services.broker_service import broker_service
+from app.services.dispatch_gating_service import (
+    DispatchGateResult,
+    DispatchReasonCode,
+    dispatch_gating_service,
+)
 from app.services.instrument_registry_service import instrument_registry_service
 from app.services.position_service import position_service
+from app.services.system_events_service import (
+    SystemEventLevel,
+    system_events_service,
+)
+
+
+def _dispatch_block_message(reason_code: str | None) -> str:
+    if reason_code == DispatchReasonCode.DISPATCH_DISABLED:
+        return "Order dispatch blocked: dispatch disabled"
+    if reason_code == DispatchReasonCode.BROKER_SESSION_STALE:
+        return "Order dispatch blocked: broker session stale"
+    if reason_code == DispatchReasonCode.BROKER_SESSION_MISSING:
+        return "Order dispatch blocked: broker session missing"
+    if reason_code == DispatchReasonCode.BROKER_NOT_CONNECTED:
+        return "Order dispatch blocked: broker not connected"
+    return "Order dispatch blocked: not dispatchable"
+
+
+def _dispatch_failed_message(reason_code: str | None, *, rejected: bool) -> str:
+    if rejected:
+        return "Order dispatch failed: broker rejected order"
+    if reason_code == DispatchReasonCode.BROKER_DISPATCH_ERROR:
+        return "Order dispatch failed before broker acknowledgement"
+    return "Order dispatch failed"
 
 
 class OrderValidationError(ValueError):
@@ -70,7 +98,16 @@ def _ensure_orders_schema(db: Session, *, require_lots: bool = False) -> None:
                 "Run: make backend-migrate"
             )
         cols = {c.get("name") for c in inspector.get_columns(Order.__tablename__)}
-        required_cols = {"source", "intent_type", "trigger_mode"}
+        required_cols = {
+            "source",
+            "intent_type",
+            "trigger_mode",
+            "correlation_id",
+            "blocked_reason_code",
+            "blocked_reason_message",
+            "failure_reason_code",
+            "failure_reason_message",
+        }
         missing_cols = sorted([c for c in required_cols if c not in cols])
         if missing_cols:
             raise OrderDependencyError(
@@ -279,16 +316,6 @@ class OrderService:
         _validate_broker_constraints(broker=broker, order_type=order_type)
         _validate_price(order_type, limit_price)
 
-        status = broker_service.status(db, user, broker=broker)
-        if not status.configured:
-            raise OrderValidationError("Broker is not configured")
-        if not status.enabled:
-            raise OrderValidationError("Broker is disabled")
-        if status.stale or not status.connected:
-            raise OrderValidationError(
-                "Broker session is not connected (reconnect required)"
-            )
-
         contract = _resolve_contract(db, instrument=instrument, broker=broker)
         warnings: list[str] = []
 
@@ -371,16 +398,6 @@ class OrderService:
         if not instrument.lot_size or instrument.lot_size <= 0:
             raise OrderValidationError("Instrument lot_size is missing")
 
-        status = broker_service.status(db, user, broker=broker)
-        if not status.configured:
-            raise OrderValidationError("Broker is not configured")
-        if not status.enabled:
-            raise OrderValidationError("Broker is disabled")
-        if status.stale or not status.connected:
-            raise OrderValidationError(
-                "Broker session is not connected (reconnect required)"
-            )
-
         quantity = int(lots) * int(instrument.lot_size)
         contract = _resolve_derivative_contract(
             db, instrument=instrument, broker=broker
@@ -424,12 +441,12 @@ class OrderService:
         *,
         user: User,
         preview: StockOrderPreview,
-    ) -> tuple[Order, EquityOrderResult]:
+        correlation_id: str,
+        dispatch_tags: dict | None = None,
+    ) -> tuple[Order, EquityOrderResult | None, DispatchGateResult]:
         _ensure_orders_schema(db, require_lots=False)
 
         adapter = broker_service.get_adapter(preview.broker)
-        if not hasattr(adapter, "place_equity_order"):
-            raise BrokerError("Broker adapter does not support equity orders yet")
 
         order = Order(
             user_id=user.id,
@@ -477,34 +494,189 @@ class OrderService:
                 "limit_price": preview.request.limit_price,
             },
             margin_snapshot_json=None,
+            correlation_id=correlation_id,
+            blocked_reason_code=None,
+            blocked_reason_message=None,
+            failure_reason_code=None,
+            failure_reason_message=None,
+            dispatch_tags_json=dispatch_tags or None,
+            dispatch_diagnostics_json=None,
         )
         db.add(order)
         db.commit()
         db.refresh(order)
+
+        gate = dispatch_gating_service.evaluate(
+            db, user=user, broker=preview.broker, correlation_id=correlation_id
+        )
+        order.dispatch_diagnostics_json = gate.diagnostics
+
+        if not gate.allowed:
+            order.status = OrderStatus.BLOCKED.value
+            order.blocked_reason_code = gate.reason_code
+            order.blocked_reason_message = gate.reason_message
+            db.commit()
+            db.refresh(order)
+            system_events_service.emit(
+                db,
+                level=SystemEventLevel.WARNING,
+                category="order_dispatch",
+                message=_dispatch_block_message(gate.reason_code),
+                correlation_id=correlation_id,
+                user_id=user.id,
+                broker=preview.broker.value,
+                symbol=preview.contract.trading_symbol,
+                metadata={
+                    "order_id": order.id,
+                    "canonical_id": order.canonical_id,
+                    "side": order.side,
+                    "quantity": int(order.quantity),
+                    "product": order.product,
+                    "order_type": order.order_type,
+                    "limit_price": float(order.limit_price)
+                    if order.limit_price is not None
+                    else None,
+                    "reason_code": gate.reason_code,
+                    "reason_message": gate.reason_message,
+                },
+            )
+            return order, None, gate
+
+        order.blocked_reason_code = None
+        order.blocked_reason_message = None
+
+        if not hasattr(adapter, "place_equity_order"):
+            order.status = OrderStatus.DISPATCH_FAILED.value
+            order.failure_reason_code = DispatchReasonCode.BROKER_DISPATCH_ERROR
+            order.failure_reason_message = (
+                "Broker adapter does not support equity orders yet."
+            )
+            db.commit()
+            db.refresh(order)
+            system_events_service.emit(
+                db,
+                level=SystemEventLevel.ERROR,
+                category="order_dispatch",
+                message=_dispatch_failed_message(
+                    DispatchReasonCode.BROKER_DISPATCH_ERROR, rejected=False
+                ),
+                correlation_id=correlation_id,
+                user_id=user.id,
+                broker=preview.broker.value,
+                symbol=preview.contract.trading_symbol,
+                metadata={
+                    "order_id": order.id,
+                    "canonical_id": order.canonical_id,
+                    "reason_code": order.failure_reason_code,
+                    "reason_message": order.failure_reason_message,
+                },
+            )
+            return order, None, gate
+
+        broker_name = getattr(adapter, "display_name", preview.broker.value)
+        system_events_service.emit(
+            db,
+            level=SystemEventLevel.INFO,
+            category="order_dispatch",
+            message=f"Order dispatch started: {broker_name}",
+            correlation_id=correlation_id,
+            user_id=user.id,
+            broker=preview.broker.value,
+            symbol=preview.contract.trading_symbol,
+            metadata={
+                "order_id": order.id,
+                "canonical_id": order.canonical_id,
+                "side": order.side,
+                "quantity": int(order.quantity),
+                "product": order.product,
+                "order_type": order.order_type,
+                "limit_price": float(order.limit_price)
+                if order.limit_price is not None
+                else None,
+            },
+        )
 
         try:
             result = adapter.place_equity_order(db, user, request=preview.request)  # type: ignore[attr-defined]
         except (AngelOrderError, ZerodhaOrderError) as exc:
             order.status = OrderStatus.REJECTED.value
             order.error_message = str(exc)
+            order.failure_reason_code = DispatchReasonCode.BROKER_REJECTED
+            order.failure_reason_message = str(exc)
             db.commit()
             db.refresh(order)
-            raise
+            system_events_service.emit(
+                db,
+                level=SystemEventLevel.ERROR,
+                category="order_dispatch",
+                message=_dispatch_failed_message(
+                    order.failure_reason_code, rejected=True
+                ),
+                correlation_id=correlation_id,
+                user_id=user.id,
+                broker=preview.broker.value,
+                symbol=preview.contract.trading_symbol,
+                metadata={
+                    "order_id": order.id,
+                    "canonical_id": order.canonical_id,
+                    "reason_code": order.failure_reason_code,
+                    "reason_message": order.failure_reason_message,
+                },
+            )
+            return order, None, gate
         except Exception as exc:  # noqa: BLE001
-            order.status = OrderStatus.FAILED.value
+            order.status = OrderStatus.DISPATCH_FAILED.value
             order.error_message = str(exc)
+            order.failure_reason_code = DispatchReasonCode.BROKER_DISPATCH_ERROR
+            order.failure_reason_message = str(exc)
             db.commit()
             db.refresh(order)
-            raise
+            system_events_service.emit(
+                db,
+                level=SystemEventLevel.ERROR,
+                category="order_dispatch",
+                message=_dispatch_failed_message(
+                    order.failure_reason_code, rejected=False
+                ),
+                correlation_id=correlation_id,
+                user_id=user.id,
+                broker=preview.broker.value,
+                symbol=preview.contract.trading_symbol,
+                metadata={
+                    "order_id": order.id,
+                    "canonical_id": order.canonical_id,
+                    "reason_code": order.failure_reason_code,
+                    "reason_message": order.failure_reason_message,
+                },
+            )
+            return order, None, gate
 
         order.broker_order_id = result.broker_order_id
-        order.status = OrderStatus.PENDING.value
+        order.status = OrderStatus.ACKNOWLEDGED.value
+        order.failure_reason_code = None
+        order.failure_reason_message = None
+        order.error_message = None
         user.last_used_broker = preview.broker.value
         position = position_service.apply_order(db, user=user, order=order)
         order.linked_position_id = position.id if position else None
         db.commit()
         db.refresh(order)
-        return order, result
+        system_events_service.emit(
+            db,
+            level=SystemEventLevel.INFO,
+            category="order_dispatch",
+            message=f"Order acknowledged by {broker_name}",
+            correlation_id=correlation_id,
+            user_id=user.id,
+            broker=preview.broker.value,
+            symbol=preview.contract.trading_symbol,
+            metadata={
+                "order_id": order.id,
+                "canonical_id": order.canonical_id,
+                "broker_order_id": order.broker_order_id,
+            },
+        )
+        return order, result, gate
 
     def place_fno_order(
         self,
@@ -512,12 +684,12 @@ class OrderService:
         *,
         user: User,
         preview: FnoOrderPreview,
-    ) -> tuple[Order, DerivativeOrderResult]:
+        correlation_id: str,
+        dispatch_tags: dict | None = None,
+    ) -> tuple[Order, DerivativeOrderResult | None, DispatchGateResult]:
         _ensure_orders_schema(db, require_lots=True)
 
         adapter = broker_service.get_adapter(preview.broker)
-        if not hasattr(adapter, "place_derivative_order"):
-            raise BrokerError("Broker adapter does not support F&O orders yet")
 
         order = Order(
             user_id=user.id,
@@ -567,10 +739,109 @@ class OrderService:
             },
             margin_snapshot_json=None,
             lots=preview.lots,
+            correlation_id=correlation_id,
+            blocked_reason_code=None,
+            blocked_reason_message=None,
+            failure_reason_code=None,
+            failure_reason_message=None,
+            dispatch_tags_json=dispatch_tags or None,
+            dispatch_diagnostics_json=None,
         )
         db.add(order)
         db.commit()
         db.refresh(order)
+
+        gate = dispatch_gating_service.evaluate(
+            db, user=user, broker=preview.broker, correlation_id=correlation_id
+        )
+        order.dispatch_diagnostics_json = gate.diagnostics
+
+        if not gate.allowed:
+            order.status = OrderStatus.BLOCKED.value
+            order.blocked_reason_code = gate.reason_code
+            order.blocked_reason_message = gate.reason_message
+            db.commit()
+            db.refresh(order)
+            system_events_service.emit(
+                db,
+                level=SystemEventLevel.WARNING,
+                category="order_dispatch",
+                message=_dispatch_block_message(gate.reason_code),
+                correlation_id=correlation_id,
+                user_id=user.id,
+                broker=preview.broker.value,
+                symbol=preview.contract.trading_symbol,
+                metadata={
+                    "order_id": order.id,
+                    "canonical_id": order.canonical_id,
+                    "side": order.side,
+                    "lots": int(order.lots) if order.lots is not None else None,
+                    "quantity": int(order.quantity),
+                    "product": order.product,
+                    "order_type": order.order_type,
+                    "limit_price": float(order.limit_price)
+                    if order.limit_price is not None
+                    else None,
+                    "reason_code": gate.reason_code,
+                    "reason_message": gate.reason_message,
+                },
+            )
+            return order, None, gate
+
+        order.blocked_reason_code = None
+        order.blocked_reason_message = None
+
+        if not hasattr(adapter, "place_derivative_order"):
+            order.status = OrderStatus.DISPATCH_FAILED.value
+            order.failure_reason_code = DispatchReasonCode.BROKER_DISPATCH_ERROR
+            order.failure_reason_message = (
+                "Broker adapter does not support F&O orders yet."
+            )
+            db.commit()
+            db.refresh(order)
+            system_events_service.emit(
+                db,
+                level=SystemEventLevel.ERROR,
+                category="order_dispatch",
+                message=_dispatch_failed_message(
+                    DispatchReasonCode.BROKER_DISPATCH_ERROR, rejected=False
+                ),
+                correlation_id=correlation_id,
+                user_id=user.id,
+                broker=preview.broker.value,
+                symbol=preview.contract.trading_symbol,
+                metadata={
+                    "order_id": order.id,
+                    "canonical_id": order.canonical_id,
+                    "reason_code": order.failure_reason_code,
+                    "reason_message": order.failure_reason_message,
+                },
+            )
+            return order, None, gate
+
+        broker_name = getattr(adapter, "display_name", preview.broker.value)
+        system_events_service.emit(
+            db,
+            level=SystemEventLevel.INFO,
+            category="order_dispatch",
+            message=f"Order dispatch started: {broker_name}",
+            correlation_id=correlation_id,
+            user_id=user.id,
+            broker=preview.broker.value,
+            symbol=preview.contract.trading_symbol,
+            metadata={
+                "order_id": order.id,
+                "canonical_id": order.canonical_id,
+                "side": order.side,
+                "lots": int(order.lots) if order.lots is not None else None,
+                "quantity": int(order.quantity),
+                "product": order.product,
+                "order_type": order.order_type,
+                "limit_price": float(order.limit_price)
+                if order.limit_price is not None
+                else None,
+            },
+        )
 
         try:
             result = adapter.place_derivative_order(  # type: ignore[attr-defined]
@@ -579,24 +850,82 @@ class OrderService:
         except (AngelOrderError, ZerodhaOrderError) as exc:
             order.status = OrderStatus.REJECTED.value
             order.error_message = str(exc)
+            order.failure_reason_code = DispatchReasonCode.BROKER_REJECTED
+            order.failure_reason_message = str(exc)
             db.commit()
             db.refresh(order)
-            raise
+            system_events_service.emit(
+                db,
+                level=SystemEventLevel.ERROR,
+                category="order_dispatch",
+                message=_dispatch_failed_message(
+                    order.failure_reason_code, rejected=True
+                ),
+                correlation_id=correlation_id,
+                user_id=user.id,
+                broker=preview.broker.value,
+                symbol=preview.contract.trading_symbol,
+                metadata={
+                    "order_id": order.id,
+                    "canonical_id": order.canonical_id,
+                    "reason_code": order.failure_reason_code,
+                    "reason_message": order.failure_reason_message,
+                },
+            )
+            return order, None, gate
         except Exception as exc:  # noqa: BLE001
-            order.status = OrderStatus.FAILED.value
+            order.status = OrderStatus.DISPATCH_FAILED.value
             order.error_message = str(exc)
+            order.failure_reason_code = DispatchReasonCode.BROKER_DISPATCH_ERROR
+            order.failure_reason_message = str(exc)
             db.commit()
             db.refresh(order)
-            raise
+            system_events_service.emit(
+                db,
+                level=SystemEventLevel.ERROR,
+                category="order_dispatch",
+                message=_dispatch_failed_message(
+                    order.failure_reason_code, rejected=False
+                ),
+                correlation_id=correlation_id,
+                user_id=user.id,
+                broker=preview.broker.value,
+                symbol=preview.contract.trading_symbol,
+                metadata={
+                    "order_id": order.id,
+                    "canonical_id": order.canonical_id,
+                    "reason_code": order.failure_reason_code,
+                    "reason_message": order.failure_reason_message,
+                },
+            )
+            return order, None, gate
 
         order.broker_order_id = result.broker_order_id
-        order.status = OrderStatus.PENDING.value
+        order.status = OrderStatus.ACKNOWLEDGED.value
+        order.failure_reason_code = None
+        order.failure_reason_message = None
+        order.error_message = None
         user.last_used_broker = preview.broker.value
         position = position_service.apply_order(db, user=user, order=order)
         order.linked_position_id = position.id if position else None
         db.commit()
         db.refresh(order)
-        return order, result
+        system_events_service.emit(
+            db,
+            level=SystemEventLevel.INFO,
+            category="order_dispatch",
+            message=f"Order acknowledged by {broker_name}",
+            correlation_id=correlation_id,
+            user_id=user.id,
+            broker=preview.broker.value,
+            symbol=preview.contract.trading_symbol,
+            metadata={
+                "order_id": order.id,
+                "canonical_id": order.canonical_id,
+                "broker_order_id": order.broker_order_id,
+            },
+        )
+        return order, result, gate
 
 
 order_service = OrderService()

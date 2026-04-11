@@ -48,6 +48,11 @@ class OrderType(StrEnum):
 
 
 class OrderStatus(StrEnum):
+    # Pre-dispatch / dispatch lifecycle (S4.3).
+    BLOCKED = "BLOCKED"
+    DISPATCH_FAILED = "DISPATCH_FAILED"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+
     PENDING = "PENDING"
     OPEN = "OPEN"
     EXECUTED = "EXECUTED"

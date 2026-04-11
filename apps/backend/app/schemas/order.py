@@ -47,7 +47,8 @@ class StockOrderPreviewRequest(StockOrderBase, OrderIntentMetadata):
 
 
 class StockOrderCreateRequest(StockOrderBase, OrderIntentMetadata):
-    pass
+    correlation_id: str | None = None
+    dispatch_tags: dict[str, str] | None = None
 
 
 class BrokerRouting(BaseModel):
@@ -71,6 +72,11 @@ class StockOrderCreateResponse(BaseModel):
     order_id: int
     status: OrderStatus
     broker_order_id: str | None = None
+    correlation_id: str
+    blocked_reason_code: str | None = None
+    blocked_reason_message: str | None = None
+    failure_reason_code: str | None = None
+    failure_reason_message: str | None = None
     preview: StockOrderPreviewResponse
 
 
@@ -93,7 +99,8 @@ class FnoOrderPreviewRequest(FnoOrderBase, OrderIntentMetadata):
 
 
 class FnoOrderCreateRequest(FnoOrderBase, OrderIntentMetadata):
-    pass
+    correlation_id: str | None = None
+    dispatch_tags: dict[str, str] | None = None
 
 
 class FnoOrderPreviewResponse(BaseModel):
@@ -112,6 +119,11 @@ class FnoOrderCreateResponse(BaseModel):
     order_id: int
     status: OrderStatus
     broker_order_id: str | None = None
+    correlation_id: str
+    blocked_reason_code: str | None = None
+    blocked_reason_message: str | None = None
+    failure_reason_code: str | None = None
+    failure_reason_message: str | None = None
     preview: FnoOrderPreviewResponse
 
 
@@ -135,6 +147,11 @@ class OrderOut(BaseModel):
     status: OrderStatus | None = None
     broker_order_id: str | None = None
     rejection_reason: str | None = None
+    correlation_id: str | None = None
+    blocked_reason_code: str | None = None
+    blocked_reason_message: str | None = None
+    failure_reason_code: str | None = None
+    failure_reason_message: str | None = None
 
     source: OrderSource
     intent_type: OrderIntentType

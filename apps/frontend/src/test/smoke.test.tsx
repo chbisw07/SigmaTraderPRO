@@ -85,6 +85,28 @@ test('renders the protected shell when authenticated', async () => {
   })
 })
 
+test('system events page renders', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: 'angel',
+      include_broker_orders: true,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/system-events')
+  expect(await screen.findByRole('heading', { name: 'System Events' })).toBeInTheDocument()
+  expect(await screen.findByText(/Order dispatch blocked/i)).toBeInTheDocument()
+})
+
 test('logout clears auth state and redirects to login', async () => {
   useAuthStore.setState({
     status: 'authenticated',

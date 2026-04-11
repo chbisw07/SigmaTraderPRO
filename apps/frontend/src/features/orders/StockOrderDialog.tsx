@@ -79,7 +79,14 @@ export function StockOrderDialog({ open, onOpenChange, launch }: Props) {
       : null,
   )
 
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<
+    | {
+        tone: 'ok' | 'blocked' | 'error'
+        text: string
+        correlationId?: string | null
+      }
+    | null
+  >(null)
   const [preview, setPreview] = useState<ordersApi.StockOrderPreviewResponse | null>(null)
 
   const canTrade = instrument ? isCashInstrument(instrument) : false
@@ -154,7 +161,7 @@ export function StockOrderDialog({ open, onOpenChange, launch }: Props) {
         typeof err === 'object' && err && 'message' in err
           ? String((err as { message?: unknown }).message ?? 'Preview failed')
           : 'Preview failed'
-      setMessage(msg)
+      setMessage({ tone: 'error', text: msg })
       setPreview(null)
     },
   })
@@ -165,7 +172,30 @@ export function StockOrderDialog({ open, onOpenChange, launch }: Props) {
       return ordersApi.createStockOrder(accessToken, payload)
     },
     onSuccess: async (data) => {
-      setMessage(`Order submitted. Broker order id: ${data.broker_order_id ?? '—'}`)
+      const status = (data.status ?? '').toUpperCase()
+      if (status === 'BLOCKED') {
+        setMessage({
+          tone: 'blocked',
+          text: data.blocked_reason_message || 'Order blocked: dispatch not allowed in current system state.',
+          correlationId: data.correlation_id,
+        })
+      } else if (['DISPATCH_FAILED', 'FAILED', 'REJECTED'].includes(status)) {
+        setMessage({
+          tone: 'error',
+          text:
+            data.failure_reason_message ||
+            (status === 'REJECTED'
+              ? 'Order dispatch failed: broker rejected the request.'
+              : 'Order dispatch failed.'),
+          correlationId: data.correlation_id,
+        })
+      } else {
+        setMessage({
+          tone: 'ok',
+          text: `Order acknowledged by broker. Broker order id: ${data.broker_order_id ?? '—'}`,
+          correlationId: data.correlation_id,
+        })
+      }
       setPreview(data.preview)
       await updateLastUsedBroker(broker)
     },
@@ -174,7 +204,7 @@ export function StockOrderDialog({ open, onOpenChange, launch }: Props) {
         typeof err === 'object' && err && 'message' in err
           ? String((err as { message?: unknown }).message ?? 'Order failed')
           : 'Order failed'
-      setMessage(msg)
+      setMessage({ tone: 'error', text: msg })
     },
   })
 
@@ -403,12 +433,19 @@ export function StockOrderDialog({ open, onOpenChange, launch }: Props) {
             <div
               className={cn(
                 'rounded-md border p-2 text-sm',
-                message.toLowerCase().includes('fail') || message.toLowerCase().includes('error')
+                message.tone === 'error'
                   ? 'border-destructive/30 bg-destructive/10 text-destructive'
-                  : 'border-border bg-card text-foreground',
+                  : message.tone === 'blocked'
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+                    : 'border-border bg-card text-foreground',
               )}
             >
-              {message}
+              <div>{message.text}</div>
+              {message.correlationId ? (
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  Correlation ID: <span className="font-mono">{message.correlationId}</span>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

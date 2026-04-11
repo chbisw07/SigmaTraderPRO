@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +13,7 @@ import app.models.instrument  # noqa: F401
 import app.models.instrument_mapping  # noqa: F401
 import app.models.order  # noqa: F401
 import app.models.position  # noqa: F401
+import app.models.system_event  # noqa: F401
 import app.models.user  # noqa: F401
 from app.core.config import settings
 from app.core.crypto import encrypt_json
@@ -24,6 +25,7 @@ from app.models.base import Base
 from app.models.broker_connection import BrokerConnection
 from app.models.instrument import Instrument
 from app.models.instrument_mapping import InstrumentMapping
+from app.models.order import Order
 from app.models.user import User
 
 
@@ -232,11 +234,208 @@ def test_stock_order_create_places_order_with_mocked_broker(
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "PENDING"
+    assert data["status"] == "ACKNOWLEDGED"
     assert data["broker_order_id"] == "ANGEL_ORDER_ID_1"
+    assert data["correlation_id"]
 
     updated_user = db_session.query(User).filter(User.id == user.id).one()
     assert updated_user.last_used_broker == "angel"
+
+    created = db_session.query(Order).filter(Order.id == data["order_id"]).one()
+    assert created.correlation_id == data["correlation_id"]
+    assert created.blocked_reason_code is None
+    assert created.failure_reason_code is None
+
+
+def test_stock_order_create_blocks_when_broker_session_missing(
+    db_session: Session, client: TestClient, monkeypatch
+) -> None:
+    _create_user(db_session, email="u_block@example.com", password="pass123")
+    user = db_session.query(User).filter(User.email == "u_block@example.com").one()
+
+    # Configured + enabled, but missing session (needs reconnect).
+    conn = BrokerConnection(
+        user_id=user.id,
+        broker_key="angel",
+        is_enabled=True,
+        credentials_enc=encrypt_json(
+            {"api_key": "A", "client_code": "C", "password": "P"},
+            key=settings.broker_encryption_key,
+        ),
+        session_enc=None,
+        session_day=None,
+        last_connected_at=None,
+        last_error=None,
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    inst = _ensure_equity_instrument(
+        db_session, canonical_id="NSE_EQ:EQUITY:EQUITY:SBIN"
+    )
+    inst.symbol_root = "SBIN"
+    inst.display_symbol = "SBIN"
+    db_session.commit()
+    db_session.add(
+        InstrumentMapping(
+            instrument_id=inst.id,
+            broker_key="angel",
+            broker_instrument_id="3045",
+            broker_trading_symbol="SBIN-EQ",
+            raw={},
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    # Ensure we never attempt dispatch when blocked.
+    def _no_dispatch(**_):  # type: ignore[no-untyped-def]
+        raise AssertionError("dispatch should not be attempted")
+
+    monkeypatch.setattr("app.brokers.angel_adapter.place_order", _no_dispatch)
+
+    access = _login(client, "u_block@example.com", "pass123")
+    resp = client.post(
+        "/api/v1/orders",
+        json={
+            "broker": "angel",
+            "canonical_id": inst.canonical_id,
+            "side": "BUY",
+            "quantity": 1,
+            "product": "CNC",
+            "order_type": "MARKET",
+        },
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "BLOCKED"
+    assert data["broker_order_id"] is None
+    assert data["blocked_reason_code"] == "BROKER_SESSION_MISSING"
+    assert "blocked" in (data["blocked_reason_message"] or "").lower()
+    assert data["correlation_id"]
+
+    created = db_session.query(Order).filter(Order.id == data["order_id"]).one()
+    assert created.status == "BLOCKED"
+    assert created.blocked_reason_code == "BROKER_SESSION_MISSING"
+    assert created.correlation_id == data["correlation_id"]
+
+
+def test_stock_order_create_blocks_when_broker_session_stale(
+    db_session: Session, client: TestClient, monkeypatch
+) -> None:
+    _create_user(db_session, email="u_stale@example.com", password="pass123")
+    user = db_session.query(User).filter(User.email == "u_stale@example.com").one()
+    _connect_angel(db_session, user_id=user.id)
+
+    # Force stale session model: session_day != today.
+    conn = (
+        db_session.query(BrokerConnection)
+        .filter(BrokerConnection.user_id == user.id)
+        .filter(BrokerConnection.broker_key == "angel")
+        .one()
+    )
+    conn.session_day = today_ist() - timedelta(days=1)
+    db_session.commit()
+
+    inst = _ensure_equity_instrument(
+        db_session, canonical_id="NSE_EQ:EQUITY:EQUITY:ITC"
+    )
+    inst.symbol_root = "ITC"
+    inst.display_symbol = "ITC"
+    db_session.commit()
+    db_session.add(
+        InstrumentMapping(
+            instrument_id=inst.id,
+            broker_key="angel",
+            broker_instrument_id="1660",
+            broker_trading_symbol="ITC-EQ",
+            raw={},
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    def _no_dispatch(**_):  # type: ignore[no-untyped-def]
+        raise AssertionError("dispatch should not be attempted")
+
+    monkeypatch.setattr("app.brokers.angel_adapter.place_order", _no_dispatch)
+
+    access = _login(client, "u_stale@example.com", "pass123")
+    resp = client.post(
+        "/api/v1/orders",
+        json={
+            "broker": "angel",
+            "canonical_id": inst.canonical_id,
+            "side": "BUY",
+            "quantity": 1,
+            "product": "CNC",
+            "order_type": "MARKET",
+        },
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "BLOCKED"
+    assert data["blocked_reason_code"] == "BROKER_SESSION_STALE"
+
+
+def test_stock_order_create_persists_dispatch_failure(
+    db_session: Session, client: TestClient, monkeypatch
+) -> None:
+    _create_user(db_session, email="u_fail@example.com", password="pass123")
+    user = db_session.query(User).filter(User.email == "u_fail@example.com").one()
+    _connect_angel(db_session, user_id=user.id)
+
+    inst = _ensure_equity_instrument(
+        db_session, canonical_id="NSE_EQ:EQUITY:EQUITY:HDFCBANK"
+    )
+    inst.symbol_root = "HDFCBANK"
+    inst.display_symbol = "HDFCBANK"
+    db_session.commit()
+    db_session.add(
+        InstrumentMapping(
+            instrument_id=inst.id,
+            broker_key="angel",
+            broker_instrument_id="1333",
+            broker_trading_symbol="HDFCBANK-EQ",
+            raw={},
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    calls: list[str] = []
+
+    def _boom(**_):
+        calls.append("called")
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("app.brokers.angel_adapter.place_order", _boom)
+
+    access = _login(client, "u_fail@example.com", "pass123")
+    resp = client.post(
+        "/api/v1/orders",
+        json={
+            "broker": "angel",
+            "canonical_id": inst.canonical_id,
+            "side": "BUY",
+            "quantity": 1,
+            "product": "MIS",
+            "order_type": "MARKET",
+        },
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "DISPATCH_FAILED"
+    assert data["failure_reason_code"] == "BROKER_DISPATCH_ERROR"
+    assert data["correlation_id"]
+    assert calls == ["called"]
+
+    created = db_session.query(Order).filter(Order.id == data["order_id"]).one()
+    assert created.status == "DISPATCH_FAILED"
+    assert created.failure_reason_code == "BROKER_DISPATCH_ERROR"
 
 
 def test_limit_requires_price(db_session: Session, client: TestClient) -> None:

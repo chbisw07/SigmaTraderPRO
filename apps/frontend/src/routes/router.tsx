@@ -9,6 +9,7 @@ import { PositionsPage } from '@/pages/PositionsPage'
 import { SearchPage } from '@/pages/SearchPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StrategiesPage } from '@/pages/StrategiesPage'
+import { SystemEventsPage } from '@/pages/SystemEventsPage'
 import { RequireAuth } from '@/routes/RequireAuth'
 import { RootLayout } from '@/routes/RootLayout'
 
@@ -31,6 +32,7 @@ export const routeConfig: RouteObject[] = [
           { path: 'positions', element: <PositionsPage /> },
           { path: 'orders', element: <OrdersPage /> },
           { path: 'brokers', element: <BrokersPage /> },
+          { path: 'system-events', element: <SystemEventsPage /> },
           { path: 'settings', element: <SettingsPage /> },
         ],
       },

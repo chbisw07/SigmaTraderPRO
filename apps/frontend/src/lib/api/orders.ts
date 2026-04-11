@@ -71,6 +71,11 @@ export type StockOrderCreateResponse = {
   order_id: number
   status: string
   broker_order_id: string | null
+  correlation_id: string
+  blocked_reason_code?: string | null
+  blocked_reason_message?: string | null
+  failure_reason_code?: string | null
+  failure_reason_message?: string | null
   preview: StockOrderPreviewResponse
 }
 
@@ -94,6 +99,11 @@ export type FnoOrderCreateResponse = {
   order_id: number
   status: string
   broker_order_id: string | null
+  correlation_id: string
+  blocked_reason_code?: string | null
+  blocked_reason_message?: string | null
+  failure_reason_code?: string | null
+  failure_reason_message?: string | null
   preview: FnoOrderPreviewResponse
 }
 
@@ -114,6 +124,11 @@ export type OrderOut = {
   status: string | null
   broker_order_id: string | null
   rejection_reason: string | null
+  correlation_id?: string | null
+  blocked_reason_code?: string | null
+  blocked_reason_message?: string | null
+  failure_reason_code?: string | null
+  failure_reason_message?: string | null
   source: OrderSource
   intent_type: OrderIntentType
   trigger_mode: OrderTriggerMode
@@ -167,6 +182,11 @@ export type OrdersWorkspaceRow = {
   avg_price: number | null
   status: string | null
   rejection_reason: string | null
+  correlation_id?: string | null
+  blocked_reason_code?: string | null
+  blocked_reason_message?: string | null
+  failure_reason_code?: string | null
+  failure_reason_message?: string | null
   placed_at: string | null
   source: OrderSource | null
   intent_type: OrderIntentType | null
