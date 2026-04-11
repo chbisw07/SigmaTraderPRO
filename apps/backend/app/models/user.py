@@ -22,6 +22,9 @@ class User(Base):
     )
 
     last_used_broker: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    include_broker_orders: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
+from app.brokers.angel_client import AngelOrderError
 from app.brokers.base import BrokerError
 from app.brokers.types import BrokerKey
+from app.brokers.zerodha_client import ZerodhaOrderError
 from app.instruments.types import Exchange, InstrumentType, OptionType
 from app.models.instrument import Instrument
 from app.models.order import Order
@@ -18,13 +20,18 @@ from app.orders.types import (
     DerivativeOrderResult,
     EquityOrderRequest,
     EquityOrderResult,
+    OrderIntentType,
     OrderProduct,
     OrderSide,
+    OrderSource,
     OrderStatus,
+    OrderTriggerMode,
     OrderType,
+    RiskMode,
 )
 from app.services.broker_service import broker_service
 from app.services.instrument_registry_service import instrument_registry_service
+from app.services.position_service import position_service
 
 
 class OrderValidationError(ValueError):
@@ -41,6 +48,16 @@ class StockOrderPreview:
     broker: BrokerKey
     contract: BrokerEquityContract
     request: EquityOrderRequest
+    source: OrderSource
+    intent_type: OrderIntentType
+    trigger_mode: OrderTriggerMode
+    risk_mode: RiskMode | None
+    sl_value: float | None
+    tp_value: float | None
+    trailing_value: float | None
+    parent_order_id: int | None
+    linked_position_id: int | None
+    broker_context: str | None
     warnings: list[str]
 
 
@@ -52,13 +69,20 @@ def _ensure_orders_schema(db: Session, *, require_lots: bool = False) -> None:
                 "Database schema not migrated (missing orders table). "
                 "Run: make backend-migrate"
             )
-        if require_lots:
-            cols = {c.get("name") for c in inspector.get_columns(Order.__tablename__)}
-            if "lots" not in cols:
-                raise OrderDependencyError(
-                    "Database schema not migrated (orders.lots missing). "
-                    "Run: make backend-migrate"
-                )
+        cols = {c.get("name") for c in inspector.get_columns(Order.__tablename__)}
+        required_cols = {"source", "intent_type", "trigger_mode"}
+        missing_cols = sorted([c for c in required_cols if c not in cols])
+        if missing_cols:
+            raise OrderDependencyError(
+                "Database schema not migrated (orders missing: "
+                f"{', '.join(missing_cols)}). "
+                "Run: make backend-migrate"
+            )
+        if require_lots and "lots" not in cols:
+            raise OrderDependencyError(
+                "Database schema not migrated (orders.lots missing). "
+                "Run: make backend-migrate"
+            )
     except OrderDependencyError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -72,6 +96,16 @@ class FnoOrderPreview:
     contract: BrokerDerivativeContract
     request: DerivativeOrderRequest
     lots: int
+    source: OrderSource
+    intent_type: OrderIntentType
+    trigger_mode: OrderTriggerMode
+    risk_mode: RiskMode | None
+    sl_value: float | None
+    tp_value: float | None
+    trailing_value: float | None
+    parent_order_id: int | None
+    linked_position_id: int | None
+    broker_context: str | None
     warnings: list[str]
 
 
@@ -223,6 +257,15 @@ class OrderService:
         product: OrderProduct,
         order_type: OrderType,
         limit_price: float | None,
+        source: OrderSource = OrderSource.manual_ui,
+        intent_type: OrderIntentType = OrderIntentType.ENTRY,
+        risk_mode: RiskMode | None = None,
+        sl_value: float | None = None,
+        tp_value: float | None = None,
+        trailing_value: float | None = None,
+        parent_order_id: int | None = None,
+        linked_position_id: int | None = None,
+        broker_context: str | None = None,
     ) -> StockOrderPreview:
         if quantity <= 0:
             raise OrderValidationError("quantity must be >= 1")
@@ -262,6 +305,20 @@ class OrderService:
             broker=broker,
             contract=contract,
             request=req,
+            source=source,
+            intent_type=intent_type,
+            trigger_mode=(
+                OrderTriggerMode.LIMIT
+                if order_type == OrderType.LIMIT
+                else OrderTriggerMode.MARKET
+            ),
+            risk_mode=risk_mode,
+            sl_value=sl_value,
+            tp_value=tp_value,
+            trailing_value=trailing_value,
+            parent_order_id=parent_order_id,
+            linked_position_id=linked_position_id,
+            broker_context=broker_context,
             warnings=warnings,
         )
 
@@ -281,6 +338,15 @@ class OrderService:
         product: OrderProduct,
         order_type: OrderType,
         limit_price: float | None,
+        source: OrderSource = OrderSource.manual_ui,
+        intent_type: OrderIntentType = OrderIntentType.ENTRY,
+        risk_mode: RiskMode | None = None,
+        sl_value: float | None = None,
+        tp_value: float | None = None,
+        trailing_value: float | None = None,
+        parent_order_id: int | None = None,
+        linked_position_id: int | None = None,
+        broker_context: str | None = None,
     ) -> FnoOrderPreview:
         if instrument_type not in {InstrumentType.OPTION, InstrumentType.FUTURE}:
             raise OrderValidationError("instrument_type must be OPTION or FUTURE")
@@ -335,6 +401,20 @@ class OrderService:
             contract=contract,
             request=req,
             lots=lots,
+            source=source,
+            intent_type=intent_type,
+            trigger_mode=(
+                OrderTriggerMode.LIMIT
+                if order_type == OrderType.LIMIT
+                else OrderTriggerMode.MARKET
+            ),
+            risk_mode=risk_mode,
+            sl_value=sl_value,
+            tp_value=tp_value,
+            trailing_value=trailing_value,
+            parent_order_id=parent_order_id,
+            linked_position_id=linked_position_id,
+            broker_context=broker_context,
             warnings=warnings,
         )
 
@@ -360,7 +440,43 @@ class OrderService:
             product=preview.request.product.value,
             order_type=preview.request.order_type.value,
             limit_price=preview.request.limit_price,
-            status=OrderStatus.CREATED.value,
+            avg_executed_price=None,
+            status=OrderStatus.PENDING.value,
+            source=preview.source.value,
+            intent_type=preview.intent_type.value,
+            trigger_mode=preview.trigger_mode.value,
+            risk_mode=preview.risk_mode.value if preview.risk_mode else None,
+            sl_value=preview.sl_value,
+            tp_value=preview.tp_value,
+            trailing_value=preview.trailing_value,
+            parent_order_id=preview.parent_order_id,
+            linked_position_id=preview.linked_position_id,
+            broker_context=preview.broker_context,
+            broker_symbol_resolved=preview.contract.trading_symbol,
+            broker_symbol_token_resolved=preview.contract.symbol_token,
+            lot_size_snapshot=preview.instrument.lot_size,
+            preview_snapshot_json={
+                "canonical_id": preview.instrument.canonical_id,
+                "broker": preview.broker.value,
+                "exchange": preview.contract.exchange,
+                "trading_symbol": preview.contract.trading_symbol,
+                "side": preview.request.side.value,
+                "quantity": preview.request.quantity,
+                "product": preview.request.product.value,
+                "order_type": preview.request.order_type.value,
+                "limit_price": preview.request.limit_price,
+            },
+            broker_payload_json={
+                "exchange": preview.contract.exchange,
+                "trading_symbol": preview.contract.trading_symbol,
+                "symbol_token": preview.contract.symbol_token,
+                "side": preview.request.side.value,
+                "quantity": preview.request.quantity,
+                "product": preview.request.product.value,
+                "order_type": preview.request.order_type.value,
+                "limit_price": preview.request.limit_price,
+            },
+            margin_snapshot_json=None,
         )
         db.add(order)
         db.commit()
@@ -368,6 +484,12 @@ class OrderService:
 
         try:
             result = adapter.place_equity_order(db, user, request=preview.request)  # type: ignore[attr-defined]
+        except (AngelOrderError, ZerodhaOrderError) as exc:
+            order.status = OrderStatus.REJECTED.value
+            order.error_message = str(exc)
+            db.commit()
+            db.refresh(order)
+            raise
         except Exception as exc:  # noqa: BLE001
             order.status = OrderStatus.FAILED.value
             order.error_message = str(exc)
@@ -376,8 +498,10 @@ class OrderService:
             raise
 
         order.broker_order_id = result.broker_order_id
-        order.status = OrderStatus.SUBMITTED.value
+        order.status = OrderStatus.PENDING.value
         user.last_used_broker = preview.broker.value
+        position = position_service.apply_order(db, user=user, order=order)
+        order.linked_position_id = position.id if position else None
         db.commit()
         db.refresh(order)
         return order, result
@@ -404,7 +528,44 @@ class OrderService:
             product=preview.request.product.value,
             order_type=preview.request.order_type.value,
             limit_price=preview.request.limit_price,
-            status=OrderStatus.CREATED.value,
+            avg_executed_price=None,
+            status=OrderStatus.PENDING.value,
+            source=preview.source.value,
+            intent_type=preview.intent_type.value,
+            trigger_mode=preview.trigger_mode.value,
+            risk_mode=preview.risk_mode.value if preview.risk_mode else None,
+            sl_value=preview.sl_value,
+            tp_value=preview.tp_value,
+            trailing_value=preview.trailing_value,
+            parent_order_id=preview.parent_order_id,
+            linked_position_id=preview.linked_position_id,
+            broker_context=preview.broker_context,
+            broker_symbol_resolved=preview.contract.trading_symbol,
+            broker_symbol_token_resolved=preview.contract.symbol_token,
+            lot_size_snapshot=preview.instrument.lot_size,
+            preview_snapshot_json={
+                "canonical_id": preview.instrument.canonical_id,
+                "broker": preview.broker.value,
+                "exchange": preview.contract.exchange,
+                "trading_symbol": preview.contract.trading_symbol,
+                "side": preview.request.side.value,
+                "lots": preview.lots,
+                "quantity": preview.request.quantity,
+                "product": preview.request.product.value,
+                "order_type": preview.request.order_type.value,
+                "limit_price": preview.request.limit_price,
+            },
+            broker_payload_json={
+                "exchange": preview.contract.exchange,
+                "trading_symbol": preview.contract.trading_symbol,
+                "symbol_token": preview.contract.symbol_token,
+                "side": preview.request.side.value,
+                "quantity": preview.request.quantity,
+                "product": preview.request.product.value,
+                "order_type": preview.request.order_type.value,
+                "limit_price": preview.request.limit_price,
+            },
+            margin_snapshot_json=None,
             lots=preview.lots,
         )
         db.add(order)
@@ -415,6 +576,12 @@ class OrderService:
             result = adapter.place_derivative_order(  # type: ignore[attr-defined]
                 db, user, request=preview.request
             )
+        except (AngelOrderError, ZerodhaOrderError) as exc:
+            order.status = OrderStatus.REJECTED.value
+            order.error_message = str(exc)
+            db.commit()
+            db.refresh(order)
+            raise
         except Exception as exc:  # noqa: BLE001
             order.status = OrderStatus.FAILED.value
             order.error_message = str(exc)
@@ -423,8 +590,10 @@ class OrderService:
             raise
 
         order.broker_order_id = result.broker_order_id
-        order.status = OrderStatus.SUBMITTED.value
+        order.status = OrderStatus.PENDING.value
         user.last_used_broker = preview.broker.value
+        position = position_service.apply_order(db, user=user, order=order)
+        order.linked_position_id = position.id if position else None
         db.commit()
         db.refresh(order)
         return order, result

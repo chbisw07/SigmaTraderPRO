@@ -30,6 +30,14 @@ type Props = {
         instrument: instrumentsApi.InstrumentOut
         broker?: ordersApi.BrokerKey | null
         referencePrice?: number | null
+        prefill?: {
+          side?: ordersApi.OrderSide
+          quantity?: number
+          product?: ordersApi.OrderProduct
+          order_type?: ordersApi.OrderType
+          limit_price?: number | null
+          intent?: ordersApi.OrderIntentMetadata
+        }
       }
 }
 
@@ -48,21 +56,26 @@ export function StockOrderDialog({ open, onOpenChange, launch }: Props) {
   const setStockOrderType = useOrderPrefsStore((s) => s.setStockOrderType)
 
   const instrument = launch.mode === 'contract' ? launch.instrument : null
+  const prefill = launch.mode === 'contract' ? (launch.prefill ?? null) : null
   const initialBroker =
     (launch.broker as ordersApi.BrokerKey | null | undefined) ??
     (user?.last_used_broker === 'angel' || user?.last_used_broker === 'zerodha'
       ? (user.last_used_broker as ordersApi.BrokerKey)
       : null) ??
     'angel'
+  const initialSide: ordersApi.OrderSide = prefill?.side ?? 'BUY'
+  const initialQuantity = prefill?.quantity ?? 1
+  const initialProduct: ordersApi.OrderProduct = prefill?.product ?? stockProduct
+  const initialOrderType: ordersApi.OrderType = prefill?.order_type ?? stockOrderType
 
   const [broker, setBroker] = useState<ordersApi.BrokerKey>(initialBroker)
-  const [side, setSide] = useState<ordersApi.OrderSide>('BUY')
-  const [quantity, setQuantity] = useState(1)
-  const [product, setProduct] = useState<ordersApi.OrderProduct>(stockProduct)
-  const [orderType, setOrderType] = useState<ordersApi.OrderType>(stockOrderType)
+  const [side, setSide] = useState<ordersApi.OrderSide>(initialSide)
+  const [quantity, setQuantity] = useState(initialQuantity)
+  const [product, setProduct] = useState<ordersApi.OrderProduct>(initialProduct)
+  const [orderType, setOrderType] = useState<ordersApi.OrderType>(initialOrderType)
   const [limitPrice, setLimitPrice] = useState<number | null>(
-    stockOrderType === 'LIMIT' && launch.mode === 'contract'
-      ? (launch.referencePrice ?? null)
+    initialOrderType === 'LIMIT' && launch.mode === 'contract'
+      ? (prefill?.limit_price ?? launch.referencePrice ?? null)
       : null,
   )
 
@@ -104,8 +117,27 @@ export function StockOrderDialog({ open, onOpenChange, launch }: Props) {
       product,
       order_type: orderType,
       limit_price: orderType === 'LIMIT' ? limitPrice : null,
+      source: prefill?.intent?.source ?? 'manual_ui',
+      intent_type: prefill?.intent?.intent_type ?? 'ENTRY',
+      trigger_mode: prefill?.intent?.trigger_mode ?? null,
+      risk_mode: prefill?.intent?.risk_mode ?? null,
+      sl_value: prefill?.intent?.sl_value ?? null,
+      tp_value: prefill?.intent?.tp_value ?? null,
+      trailing_value: prefill?.intent?.trailing_value ?? null,
+      parent_order_id: prefill?.intent?.parent_order_id ?? null,
+      linked_position_id: prefill?.intent?.linked_position_id ?? null,
+      broker_context: prefill?.intent?.broker_context ?? null,
     }),
-    [broker, instrument?.canonical_id, side, quantity, product, orderType, limitPrice],
+    [
+      broker,
+      instrument?.canonical_id,
+      side,
+      quantity,
+      product,
+      orderType,
+      limitPrice,
+      prefill?.intent,
+    ],
   )
 
   const previewMutation = useMutation({

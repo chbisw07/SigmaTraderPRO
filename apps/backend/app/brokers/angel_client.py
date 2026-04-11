@@ -23,6 +23,14 @@ class AngelOrderError(RuntimeError):
     pass
 
 
+class AngelOrderBookError(RuntimeError):
+    pass
+
+
+class AngelPositionBookError(RuntimeError):
+    pass
+
+
 def _headers(api_key: str) -> dict[str, str]:
     return {
         "Content-Type": "application/json",
@@ -130,3 +138,56 @@ def place_order(
     if not order_id:
         raise AngelOrderError("Angel order response missing order id")
     return str(order_id)
+
+
+def fetch_order_book(*, api_key: str, jwt_token: str) -> list[dict[str, Any]]:
+    url = (
+        "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getOrderBook"
+    )
+    headers = _headers(api_key)
+    headers["Authorization"] = f"Bearer {jwt_token}"
+
+    try:
+        with httpx.Client(timeout=settings.angel_http_timeout_seconds) as client:
+            resp = client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        raise AngelOrderBookError("Angel orderbook transport error") from exc
+
+    if resp.status_code != 200:
+        raise AngelOrderBookError(f"Angel orderbook failed ({resp.status_code})")
+
+    data: dict[str, Any] = resp.json()
+    if data.get("status") is not True:
+        msg = str(data.get("message") or "Angel orderbook failed")
+        raise AngelOrderBookError(msg)
+
+    inner = data.get("data") or []
+    if not isinstance(inner, list):
+        raise AngelOrderBookError("Angel orderbook payload must be a list")
+    return [row for row in inner if isinstance(row, dict)]
+
+
+def fetch_position_book(*, api_key: str, jwt_token: str) -> list[dict[str, Any]]:
+    # SmartAPI positions endpoint (best-effort; kept isolated behind adapter).
+    url = "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getPosition"
+    headers = _headers(api_key)
+    headers["Authorization"] = f"Bearer {jwt_token}"
+
+    try:
+        with httpx.Client(timeout=settings.angel_http_timeout_seconds) as client:
+            resp = client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        raise AngelPositionBookError("Angel positionbook transport error") from exc
+
+    if resp.status_code != 200:
+        raise AngelPositionBookError(f"Angel positionbook failed ({resp.status_code})")
+
+    data: dict[str, Any] = resp.json()
+    if data.get("status") is not True:
+        msg = str(data.get("message") or "Angel positionbook failed")
+        raise AngelPositionBookError(msg)
+
+    inner = data.get("data") or []
+    if not isinstance(inner, list):
+        raise AngelPositionBookError("Angel positionbook payload must be a list")
+    return [row for row in inner if isinstance(row, dict)]

@@ -10,5 +10,6 @@ class UserOut(BaseModel):
     email: EmailStr
     is_active: bool
     last_used_broker: str | None = None
+    include_broker_orders: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
