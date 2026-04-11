@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -139,6 +139,7 @@ export function SearchPage() {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
   const updateLastUsedBroker = useAuthStore((s) => s.updateLastUsedBroker)
+  const queryClient = useQueryClient()
 
   const getPremium = useQuoteStore((s) => s.getPremium)
   const getSpot = useQuoteStore((s) => s.getSpot)
@@ -195,7 +196,10 @@ export function SearchPage() {
       }
       return watchlistsApi.addWatchlistItemDefault(accessToken, { canonical_id: canonicalId })
     },
-    onSuccess: () => setWatchlistMsg('Added to watchlist'),
+    onSuccess: async () => {
+      setWatchlistMsg('Added to watchlist')
+      await queryClient.invalidateQueries({ queryKey: ['watchlists'] })
+    },
     onError: () => setWatchlistMsg('Add to watchlist failed'),
   })
 
