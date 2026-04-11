@@ -94,7 +94,5 @@ test('search can add an instrument to default watchlist and watchlist shows quic
 
   expect(within(row).getByRole('button', { name: 'Buy' })).toBeInTheDocument()
   expect(within(row).getByRole('button', { name: 'Sell' })).toBeInTheDocument()
-  expect(within(row).getByRole('button', { name: 'View orders' })).toBeInTheDocument()
-  expect(within(row).getByRole('button', { name: 'View positions' })).toBeInTheDocument()
-  expect(within(row).getByRole('button', { name: 'Remove from watchlist' })).toBeInTheDocument()
+  expect(within(row).getByRole('button', { name: 'More' })).toBeInTheDocument()
 })

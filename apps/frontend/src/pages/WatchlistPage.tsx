@@ -2,13 +2,10 @@ import { type ComponentProps, useEffect, useMemo, useRef, useState } from 'react
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
-  ArrowDown,
-  ArrowUp,
   Briefcase,
-  Filter,
-  MoreHorizontal,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
   Pencil,
   Plus,
   ReceiptText,
@@ -32,7 +29,6 @@ import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 import { useAuthStore } from '@/store/authStore'
 import { useWatchlistLayoutStore } from '@/store/watchlistLayoutStore'
-import { useWatchlistViewStore } from '@/store/watchlistViewStore'
 import { useQuoteStore } from '@/store/quoteStore'
 
 const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
@@ -104,18 +100,6 @@ function compactTitleForItem(item: watchlistsApi.WatchlistItemOut) {
   return inst.display_symbol
 }
 
-function isDerivativeType(t: string | null) {
-  return t === 'OPTION' || t === 'FUTURE'
-}
-
-function exchangeGroup(exchange: string | null): 'nse' | 'bse' | null {
-  if (!exchange) return null
-  const x = exchange.toUpperCase()
-  if (x.startsWith('BSE')) return 'bse'
-  if (x.startsWith('NSE')) return 'nse'
-  return null
-}
-
 function safeStoredActiveId(): number | null {
   if (typeof window === 'undefined') return null
   try {
@@ -146,22 +130,13 @@ export function WatchlistPage() {
   const watchlistMode = useWatchlistLayoutStore((s) => s.mode)
   const setWatchlistMode = useWatchlistLayoutStore((s) => s.setMode)
 
-  const filterType = useWatchlistViewStore((s) => s.filterType)
-  const filterExchange = useWatchlistViewStore((s) => s.filterExchange)
-  const sort = useWatchlistViewStore((s) => s.sort)
-  const setFilterType = useWatchlistViewStore((s) => s.setFilterType)
-  const setFilterExchange = useWatchlistViewStore((s) => s.setFilterExchange)
-  const setSort = useWatchlistViewStore((s) => s.setSort)
-  const resetView = useWatchlistViewStore((s) => s.reset)
-
   const getPremium = useQuoteStore((s) => s.getPremium)
   const getSpot = useQuoteStore((s) => s.getSpot)
 
   const [activeIdOverride, setActiveIdOverride] = useState<number | null>(() => safeStoredActiveId())
   const [banner, setBanner] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [activeRowId, setActiveRowId] = useState<number | null>(null)
-  const [controlsOpen, setControlsOpen] = useState(false)
+  const [rowMenuOpenId, setRowMenuOpenId] = useState<number | null>(null)
 
   const selectedBroker = (user?.last_used_broker as BrokerKey | null) ?? null
   const broker = selectedBroker ?? 'angel'
@@ -273,16 +248,6 @@ export function WatchlistPage() {
       setBanner('Removed')
     },
     onError: () => setBanner('Remove failed'),
-  })
-
-  const reorder = useMutation({
-    mutationFn: async ({ watchlistId, itemIds }: { watchlistId: number; itemIds: number[] }) => {
-      if (!accessToken) throw new Error('no auth')
-      await watchlistsApi.reorderWatchlistItems(accessToken, watchlistId, itemIds)
-    },
-    onSuccess: async () => {
-      await watchlistItems.refetch()
-    },
   })
 
   const brokerStatus = useQuery({
@@ -415,12 +380,6 @@ export function WatchlistPage() {
 
   const isCompact = watchlistMode === 'compact'
   const isWide = watchlistMode === 'wide'
-  const canReorder =
-    isWide &&
-    sort === 'manual' &&
-    filterType === 'all' &&
-    filterExchange === 'all' &&
-    q.trim().length === 0
 
   const filteredItems = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -433,41 +392,8 @@ export function WatchlistPage() {
       return title.includes(needle) || canon.includes(needle) || under.includes(needle)
     }
 
-    const byType = (item: watchlistsApi.WatchlistItemOut) => {
-      if (filterType === 'all') return true
-      const instType = item.instrument?.instrument_type ?? item.instrument_type
-      if (!instType) return filterType === 'derivatives'
-      if (filterType === 'equity') return instType === 'EQUITY' || instType === 'ETF'
-      if (filterType === 'index') return instType === 'INDEX'
-      if (filterType === 'derivatives') return isDerivativeType(instType) || Boolean(item.underlying)
-      return true
-    }
-
-    const byExchange = (item: watchlistsApi.WatchlistItemOut) => {
-      if (filterExchange === 'all') return true
-      const g = exchangeGroup(item.instrument?.exchange ?? item.exchange)
-      return g === filterExchange
-    }
-
-    const filtered = items.filter((i) => byText(i) && byType(i) && byExchange(i))
-
-    if (sort === 'alpha') {
-      return [...filtered].sort((a, b) => titleForItem(a).localeCompare(titleForItem(b)))
-    }
-    return filtered
-  }, [filterExchange, filterType, items, q, sort])
-
-  useEffect(() => {
-    if (!controlsOpen) return
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null
-      if (!target) return
-      if (target.closest('[data-watchlist-controls]')) return
-      setControlsOpen(false)
-    }
-    window.addEventListener('mousedown', onDown)
-    return () => window.removeEventListener('mousedown', onDown)
-  }, [controlsOpen])
+    return items.filter((i) => byText(i))
+  }, [items, q])
 
   return (
     <div className={cn('space-y-6', isCompact && 'space-y-3')}>
@@ -489,7 +415,7 @@ export function WatchlistPage() {
               <CardTitle className={cn('text-base', isCompact && 'text-sm')}>Watchlist</CardTitle>
               {!isCompact ? (
                 <div className="text-xs text-muted-foreground truncate whitespace-nowrap">
-                  Compact working set. Rows are optimized for fast Buy/Sell; quotes will layer in later.
+                  Fast Buy/Sell actions. Quotes will layer in later.
                 </div>
               ) : null}
             </div>
@@ -523,105 +449,6 @@ export function WatchlistPage() {
                 </span>
               </div>
 
-              <div className="flex items-center gap-1 rounded-md border bg-background p-1">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant={watchlistMode === 'compact' ? 'secondary' : 'ghost'}
-                  aria-label="Watchlist mode: compact"
-                  title="Compact"
-                  onClick={() => setWatchlistMode('compact')}
-                  className="h-8 w-8"
-                >
-                  <Minimize2 />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant={watchlistMode === 'standard' ? 'secondary' : 'ghost'}
-                  aria-label="Watchlist mode: standard"
-                  title="Standard"
-                  onClick={() => setWatchlistMode('standard')}
-                  className="h-8 w-8"
-                >
-                  <Square />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant={watchlistMode === 'wide' ? 'secondary' : 'ghost'}
-                  aria-label="Watchlist mode: wide"
-                  title="Wide"
-                  onClick={() => setWatchlistMode('wide')}
-                  className="h-8 w-8"
-                >
-                  <Maximize2 />
-                </Button>
-              </div>
-
-              <div className="relative" data-watchlist-controls>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="outline"
-                  aria-label="Watchlist filters"
-                  onClick={() => setControlsOpen((v) => !v)}
-                >
-                  <Filter />
-                </Button>
-                {controlsOpen ? (
-                  <div className="absolute right-0 top-[44px] z-20 w-64 rounded-md border bg-card p-3 shadow-sm">
-                    <div className="space-y-3 text-sm">
-                      <div className="font-medium">View</div>
-                      <div className="space-y-2">
-                        <label className="block text-xs text-muted-foreground">Type</label>
-                        <select
-                          value={filterType}
-                          onChange={(e) => setFilterType(e.target.value as typeof filterType)}
-                          className="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <option value="all">All</option>
-                          <option value="equity">Equity</option>
-                          <option value="index">Index</option>
-                          <option value="derivatives">Derivatives</option>
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="block text-xs text-muted-foreground">Exchange</label>
-                        <select
-                          value={filterExchange}
-                          onChange={(e) => setFilterExchange(e.target.value as typeof filterExchange)}
-                          className="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <option value="all">All</option>
-                          <option value="nse">NSE</option>
-                          <option value="bse">BSE</option>
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="block text-xs text-muted-foreground">Sort</label>
-                        <select
-                          value={sort}
-                          onChange={(e) => setSort(e.target.value as typeof sort)}
-                          className="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <option value="manual">Watchlist order</option>
-                          <option value="alpha">Alphabetical</option>
-                        </select>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 pt-2">
-                        <Button type="button" size="sm" variant="outline" onClick={resetView}>
-                          Reset
-                        </Button>
-                        <Button type="button" size="sm" onClick={() => setControlsOpen(false)}>
-                          Done
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
               <Button
                 type="button"
                 size="icon"
@@ -630,16 +457,6 @@ export function WatchlistPage() {
                 onClick={() => setSettingsOpen(true)}
               >
                 <Settings />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                aria-label="Refresh watchlist"
-                onClick={() => void watchlistItems.refetch()}
-                disabled={!activeId}
-              >
-                <span className="text-xs font-semibold">↻</span>
               </Button>
             </div>
           </div>
@@ -687,46 +504,10 @@ export function WatchlistPage() {
                 placeholder={
                   isCompact
                     ? 'Search…'
-                    : 'Search watchlist / add instruments… (e.g. INFY, NIFTY, NIFTY 24150 CE)'
+                    : 'Search watchlist / add instruments…'
                 }
                 aria-label="Watchlist add search"
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (!activeId) return
-                  const u = q.trim().toUpperCase()
-                  if (!u) return
-                  void addUnderlying.mutate({ watchlistId: activeId, underlying: u })
-                  setQ('')
-                  inputRef.current?.focus()
-                }}
-                disabled={!activeId || !q.trim()}
-                className={cn(isCompact && 'hidden')}
-              >
-                Add underlying
-              </Button>
-              {isCompact ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  aria-label="Add underlying"
-                  onClick={() => {
-                    if (!activeId) return
-                    const u = q.trim().toUpperCase()
-                    if (!u) return
-                    void addUnderlying.mutate({ watchlistId: activeId, underlying: u })
-                    setQ('')
-                    inputRef.current?.focus()
-                  }}
-                  disabled={!activeId || !q.trim()}
-                >
-                  <Plus />
-                </Button>
-              ) : null}
             </div>
 
             {searchFocused && q.trim().length > 0 ? (
@@ -761,6 +542,28 @@ export function WatchlistPage() {
                     </div>
                   </button>
                 ))}
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent/20"
+                  onClick={() => {
+                    if (!activeId) return
+                    const u = q.trim().toUpperCase()
+                    if (!u) return
+                    void addUnderlying.mutate({ watchlistId: activeId, underlying: u })
+                    setQ('')
+                    inputRef.current?.focus()
+                  }}
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">Add instrument</div>
+                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      Add “{q.trim().toUpperCase()}” as a symbol/underlying anchor
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Plus className="h-4 w-4" />
+                  </div>
+                </button>
                 {!addSearch.isFetching && (addSearch.data?.items ?? []).length === 0 ? (
                   <div className="px-3 py-4 text-sm text-muted-foreground">No matches.</div>
                 ) : null}
@@ -789,28 +592,24 @@ export function WatchlistPage() {
             <div className="rounded-md border bg-muted/20 p-4 text-sm">
               <div className="font-medium">No matches</div>
               <div className="mt-1 text-muted-foreground">
-                Adjust filters or clear the search box to see all items.
+                Clear the search box to see all items.
               </div>
               <div className="mt-3 flex gap-2">
                 <Button type="button" variant="outline" onClick={() => setQ('')}>
                   Clear search
                 </Button>
-                <Button type="button" variant="outline" onClick={resetView}>
-                  Reset filters
-                </Button>
               </div>
             </div>
           ) : (
             <div data-testid="watchlist-items" className="divide-y rounded-md border bg-card">
-              {filteredItems.map((item, idx) => {
+              {filteredItems.map((item) => {
                 const inst = item.instrument
                 const canonicalId = item.canonical_id
                 const hasPos = canonicalId ? positionSet.has(canonicalId) : false
                 const hasOpenOrder = canonicalId ? openOrderSet.has(canonicalId) : false
-                const ltp = canonicalId ? getPremium(canonicalId) : null
                 const u = (inst?.underlying ?? item.underlying ?? inst?.symbol_root ?? '').trim().toUpperCase()
                 const spot = u ? getSpot(u) : null
-                const showActions = activeRowId === item.id || isWide
+                const ltp = canonicalId ? getPremium(canonicalId) : null
 
                 return (
                   <div
@@ -822,37 +621,26 @@ export function WatchlistPage() {
                       isCompact && 'py-1.5',
                     )}
                     tabIndex={0}
-                    onMouseEnter={() => setActiveRowId(item.id)}
-                    onMouseLeave={() => setActiveRowId((v) => (v === item.id ? null : v))}
-                    onFocus={() => setActiveRowId(item.id)}
-                    onBlur={() => setActiveRowId((v) => (v === item.id ? null : v))}
+                    onMouseLeave={() => setRowMenuOpenId((v) => (v === item.id ? null : v))}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2">
                         <div className="min-w-0 truncate font-medium">
                           {isCompact ? compactTitleForItem(item) : titleForItem(item)}
                         </div>
-                        {!isCompact ? (
-                          <div className="flex items-center gap-1">
-                            <Badge variant="outline">{typeLabel(inst, item.instrument_type)}</Badge>
-                            {(inst?.exchange ?? item.exchange) ? (
-                              <Badge variant="outline">{inst?.exchange ?? item.exchange}</Badge>
-                            ) : null}
-                            {hasPos ? <Badge variant="outline">POS</Badge> : null}
-                            {hasOpenOrder ? <Badge variant="outline">ORD</Badge> : null}
-                          </div>
-                        ) : (
-                          <div className="text-[11px] text-muted-foreground">
-                            {typeLabel(inst, item.instrument_type)}
-                          </div>
-                        )}
                       </div>
 
                       {!isCompact ? (
                         <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                          {inst?.instrument_type === 'OPTION' || inst?.instrument_type === 'FUTURE'
-                            ? `${u}${inst.expiry ? ` • ${formatExpiryHuman(inst.expiry)}` : ''}`
-                            : item.canonical_id ?? item.symbol_key}
+                          <span className="mr-2">
+                            {(inst?.exchange ?? item.exchange) ? (inst?.exchange ?? item.exchange) : '—'}
+                          </span>
+                          <span className="mr-2">{typeLabel(inst, item.instrument_type)}</span>
+                          {inst?.expiry ? <span className="mr-2">• {formatExpiryHuman(inst.expiry)}</span> : null}
+                          {inst?.strike != null ? <span className="mr-2">• {formatStrikeHuman(inst.strike)}</span> : null}
+                          {inst?.option_type ? <span className="mr-2">• {inst.option_type}</span> : null}
+                          {hasPos ? <span className="mr-2">• POS</span> : null}
+                          {hasOpenOrder ? <span className="mr-2">• ORD</span> : null}
                         </div>
                       ) : inst?.expiry ? (
                         <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -861,7 +649,7 @@ export function WatchlistPage() {
                       ) : null}
                     </div>
 
-                    {!isCompact ? (
+                    {isWide ? (
                       <div className="hidden sm:flex w-20 shrink-0 flex-col items-end">
                         <div className="font-medium tabular-nums">
                           {ltp != null ? ltp.toFixed(2) : '—'}
@@ -873,125 +661,82 @@ export function WatchlistPage() {
                     ) : null}
 
                     <div className="shrink-0">
-                      {showActions ? (
-                        <div className="flex items-center gap-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="text-emerald-700 dark:text-emerald-300"
-                            onClick={() => openTrade(item, 'BUY')}
-                            disabled={!item.instrument && !item.underlying}
-                            aria-label="Buy"
-                          >
-                            {isWide ? 'Buy' : 'B'}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="text-red-700 dark:text-red-300"
-                            onClick={() => openTrade(item, 'SELL')}
-                            disabled={!item.instrument && !item.underlying}
-                            aria-label="Sell"
-                          >
-                            {isWide ? 'Sell' : 'S'}
-                          </Button>
-
-                          {!isCompact ? (
-                            <>
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="outline"
-                                aria-label="View orders"
-                                onClick={() => navigate(`/orders?q=${encodeURIComponent(item.display_symbol)}`)}
-                              >
-                                <ReceiptText />
-                              </Button>
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="outline"
-                                aria-label="View positions"
-                                onClick={() => navigate(`/positions?q=${encodeURIComponent(item.display_symbol)}`)}
-                              >
-                                <Briefcase />
-                              </Button>
-                            </>
-                          ) : null}
-
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="outline"
-                            aria-label="Remove from watchlist"
-                            onClick={() => {
-                              if (!activeId) return
-                              void removeItem.mutate({ watchlistId: activeId, itemId: item.id })
-                            }}
-                          >
-                            <Trash2 />
-                          </Button>
-
-                          {isWide && !isDerivativeType(inst?.instrument_type ?? item.instrument_type) ? (
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="outline"
-                              aria-label="More actions"
-                              onClick={() => navigate(`/search?q=${encodeURIComponent(item.display_symbol)}`)}
-                            >
-                              <MoreHorizontal />
-                            </Button>
-                          ) : null}
-
-                          {canReorder ? (
-                            <div className="ml-1 flex items-center gap-1">
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                aria-label="Move up"
-                                disabled={idx === 0}
-                                onClick={() => {
-                                  if (!activeId) return
-                                  const next = filteredItems.map((i) => i.id)
-                                  ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
-                                  void reorder.mutate({ watchlistId: activeId, itemIds: next })
-                                }}
-                              >
-                                <ArrowUp />
-                              </Button>
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                aria-label="Move down"
-                                disabled={idx === filteredItems.length - 1}
-                                onClick={() => {
-                                  if (!activeId) return
-                                  const next = filteredItems.map((i) => i.id)
-                                  ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
-                                  void reorder.mutate({ watchlistId: activeId, itemIds: next })
-                                }}
-                              >
-                                <ArrowDown />
-                              </Button>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
+                      <div className="relative flex items-center gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="text-emerald-700 dark:text-emerald-300"
+                          onClick={() => openTrade(item, 'BUY')}
+                          disabled={!item.instrument && !item.underlying}
+                          aria-label="Buy"
+                        >
+                          {isCompact ? 'B' : 'Buy'}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="text-red-700 dark:text-red-300"
+                          onClick={() => openTrade(item, 'SELL')}
+                          disabled={!item.instrument && !item.underlying}
+                          aria-label="Sell"
+                        >
+                          {isCompact ? 'S' : 'Sell'}
+                        </Button>
                         <Button
                           type="button"
                           size="icon"
                           variant="ghost"
-                          aria-label="Focus row actions"
-                          onClick={() => setActiveRowId(item.id)}
+                          aria-label="More"
+                          onClick={() => setRowMenuOpenId((v) => (v === item.id ? null : item.id))}
+                          className={cn(isCompact ? 'h-8 w-8' : 'h-9 w-9')}
                         >
                           <MoreHorizontal />
                         </Button>
-                      )}
+
+                        {rowMenuOpenId === item.id ? (
+                          <div
+                            className="absolute right-0 top-[44px] z-20 w-44 rounded-md border bg-card p-1 shadow-sm"
+                            onMouseDown={(e) => e.preventDefault()}
+                          >
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent/20"
+                              onClick={() => {
+                                setRowMenuOpenId(null)
+                                navigate(`/orders?q=${encodeURIComponent(item.display_symbol)}`)
+                              }}
+                            >
+                              <ReceiptText className="h-4 w-4" />
+                              Orders
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent/20"
+                              onClick={() => {
+                                setRowMenuOpenId(null)
+                                navigate(`/positions?q=${encodeURIComponent(item.display_symbol)}`)
+                              }}
+                            >
+                              <Briefcase className="h-4 w-4" />
+                              Positions
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent/20"
+                              onClick={() => {
+                                setRowMenuOpenId(null)
+                                if (!activeId) return
+                                void removeItem.mutate({ watchlistId: activeId, itemId: item.id })
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Remove
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 )
@@ -1010,6 +755,44 @@ export function WatchlistPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6">
+            <div className="space-y-3">
+              <div className="text-sm font-medium">Layout</div>
+              <div className="flex items-center gap-1 rounded-md border bg-background p-1">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={watchlistMode === 'compact' ? 'secondary' : 'ghost'}
+                  aria-label="Watchlist mode: compact"
+                  title="Compact"
+                  onClick={() => setWatchlistMode('compact')}
+                >
+                  <Minimize2 />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={watchlistMode === 'standard' ? 'secondary' : 'ghost'}
+                  aria-label="Watchlist mode: standard"
+                  title="Standard"
+                  onClick={() => setWatchlistMode('standard')}
+                >
+                  <Square />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={watchlistMode === 'wide' ? 'secondary' : 'ghost'}
+                  aria-label="Watchlist mode: wide"
+                  title="Wide"
+                  onClick={() => setWatchlistMode('wide')}
+                >
+                  <Maximize2 />
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Standard is the recommended daily mode. Compact reduces chrome; Wide reserves space for future quotes/metadata.
+              </div>
+            </div>
             <div className="space-y-3">
               <div className="text-sm font-medium">Watchlists</div>
               <div className="space-y-2">
