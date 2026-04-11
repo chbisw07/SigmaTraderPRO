@@ -484,17 +484,17 @@ export function WatchlistPage() {
 
       <Card>
         <CardHeader className={cn('space-y-4', isCompact && 'space-y-3')}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex-1 min-w-[140px] space-y-1">
               <CardTitle className={cn('text-base', isCompact && 'text-sm')}>Watchlist</CardTitle>
               {!isCompact ? (
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs text-muted-foreground truncate whitespace-nowrap">
                   Compact working set. Rows are optimized for fast Buy/Sell; quotes will layer in later.
                 </div>
               ) : null}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <div className="flex items-center gap-2 text-sm">
                 <select
                   value={broker}
@@ -516,6 +516,7 @@ export function WatchlistPage() {
                   className={cn(
                     'text-[11px]',
                     brokerState?.connected ? 'text-emerald-600' : 'text-muted-foreground',
+                    isCompact && 'hidden',
                   )}
                 >
                   {brokerState?.connected ? 'Connected' : 'Not connected'}
