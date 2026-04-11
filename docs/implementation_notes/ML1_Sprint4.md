@@ -179,6 +179,9 @@
   - broker-inspired card/workspace layout (tabs + embedded add/search + compact rows)
   - multiple watchlists as tabs; management is secondary via a settings dialog (rename/delete/set default/create)
   - supports canonical instruments plus “underlying-only” rows for F&O-capable underlyings
+- Refined the persistent Watchlist workspace into a terminal-style component:
+  - `compact` / `standard` / `wide` modes (mode affects both width and information density)
+  - bounded resize within app-controlled caps to keep the shell stable
 - Integrated Search → Watchlist handoff:
   - Search results include `Add` action that adds to active watchlist when available, otherwise default watchlist
 - Added row quick actions (reuses existing dialogs/routes; no duplicate ticket logic):

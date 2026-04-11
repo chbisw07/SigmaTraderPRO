@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 
 import { TopNav } from '@/components/shell/TopNav'
@@ -8,8 +9,43 @@ import { ThemeSelect } from '@/components/appearance/ThemeSelect'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { WatchlistPage } from '@/pages/WatchlistPage'
+import { WATCHLIST_WIDTH_SPECS, clampWidth, useWatchlistLayoutStore } from '@/store/watchlistLayoutStore'
 
 export function RootLayout() {
+  const mode = useWatchlistLayoutStore((s) => s.mode)
+  const widthByMode = useWatchlistLayoutStore((s) => s.widthByMode)
+  const setWidth = useWatchlistLayoutStore((s) => s.setWidth)
+  const spec = WATCHLIST_WIDTH_SPECS[mode]
+  const widthPx = clampWidth(widthByMode[mode] ?? spec.preset, spec.min, spec.max)
+  const minPx = spec.min
+  const maxPx = spec.max
+
+  const [dragging, setDragging] = useState(false)
+  const dragStartX = useRef(0)
+  const dragStartWidth = useRef(widthPx)
+
+  useEffect(() => {
+    dragStartWidth.current = widthPx
+  }, [widthPx])
+
+  useEffect(() => {
+    if (!dragging) return
+
+    const onMove = (e: MouseEvent) => {
+      const dx = e.clientX - dragStartX.current
+      setWidth(mode, dragStartWidth.current + dx)
+    }
+
+    const onUp = () => setDragging(false)
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [dragging, mode, setWidth])
+
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <header className="flex h-14 items-center justify-between border-b bg-background px-4">
@@ -45,13 +81,28 @@ export function RootLayout() {
       <div className="flex flex-1 min-h-0">
         <aside
           className={cn(
-            'hidden md:block w-[340px] shrink-0 border-r bg-card/30',
+            'hidden md:block shrink-0 border-r bg-card/30',
           )}
+          style={{ width: widthPx, minWidth: minPx, maxWidth: maxPx }}
         >
           <div className="h-full min-h-0 overflow-auto p-3">
             <WatchlistPage />
           </div>
         </aside>
+
+        <div
+          className={cn(
+            'hidden md:block w-1 shrink-0 cursor-col-resize bg-transparent',
+            dragging ? 'bg-accent/50' : 'hover:bg-accent/30',
+          )}
+          role="separator"
+          aria-label="Resize watchlist"
+          onMouseDown={(e) => {
+            setDragging(true)
+            dragStartX.current = e.clientX
+            dragStartWidth.current = widthPx
+          }}
+        />
 
         <div className="flex min-w-0 flex-1 flex-col">
           <main className="flex-1 min-h-0 overflow-auto p-4">

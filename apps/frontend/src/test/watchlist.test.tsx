@@ -16,6 +16,11 @@ function renderAt(path: string) {
 }
 
 beforeEach(() => {
+  try {
+    window.localStorage.removeItem('sigmatraderpro.watchlist.layout')
+  } catch {
+    // ignore
+  }
   useAuthStore.setState({
     status: 'authenticated',
     accessToken: 'ACCESS_TOKEN',

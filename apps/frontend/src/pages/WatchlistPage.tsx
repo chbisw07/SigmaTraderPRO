@@ -5,9 +5,12 @@ import {
   ArrowDown,
   ArrowUp,
   Briefcase,
+  Maximize2,
+  Minimize2,
   Pencil,
   Plus,
   ReceiptText,
+  Square,
   Settings,
   Trash2,
 } from 'lucide-react'
@@ -26,6 +29,7 @@ import { cn } from '@/lib/utils'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 import { useAuthStore } from '@/store/authStore'
+import { useWatchlistLayoutStore } from '@/store/watchlistLayoutStore'
 
 const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
 
@@ -82,6 +86,20 @@ function titleForItem(item: watchlistsApi.WatchlistItemOut) {
   return inst.display_symbol
 }
 
+function compactTitleForItem(item: watchlistsApi.WatchlistItemOut) {
+  const inst = item.instrument
+  if (!inst) return item.display_symbol
+  const root = (inst.underlying ?? inst.symbol_root).toUpperCase()
+  if (inst.instrument_type === 'OPTION') {
+    const strike = formatStrikeHuman(inst.strike)
+    return `${root} ${strike} ${inst.option_type ?? ''}`.trim()
+  }
+  if (inst.instrument_type === 'FUTURE') {
+    return `${root} FUT`.trim()
+  }
+  return inst.display_symbol
+}
+
 function safeStoredActiveId(): number | null {
   if (typeof window === 'undefined') return null
   try {
@@ -108,6 +126,9 @@ export function WatchlistPage() {
   const user = useAuthStore((s) => s.user)
   const updateLastUsedBroker = useAuthStore((s) => s.updateLastUsedBroker)
   const navigate = useNavigate()
+
+  const watchlistMode = useWatchlistLayoutStore((s) => s.mode)
+  const setWatchlistMode = useWatchlistLayoutStore((s) => s.setMode)
 
   const [activeIdOverride, setActiveIdOverride] = useState<number | null>(() => safeStoredActiveId())
   const [banner, setBanner] = useState<string | null>(null)
@@ -361,8 +382,11 @@ export function WatchlistPage() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingName, setEditingName] = useState('')
 
+  const isCompact = watchlistMode === 'compact'
+  const isWide = watchlistMode === 'wide'
+
   return (
-    <div className="space-y-6">
+    <div className={cn('space-y-6', isCompact && 'space-y-3')}>
       {banner ? (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
           <div className="flex items-center justify-between gap-2">
@@ -375,23 +399,26 @@ export function WatchlistPage() {
       ) : null}
 
       <Card>
-        <CardHeader className="space-y-4">
+        <CardHeader className={cn('space-y-4', isCompact && 'space-y-3')}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
-              <CardTitle className="text-base">Watchlist</CardTitle>
-              <div className="text-xs text-muted-foreground">
-                Broker-style working set with embedded search and quick trade actions.
-              </div>
+              <CardTitle className={cn('text-base', isCompact && 'text-sm')}>Watchlist</CardTitle>
+              {!isCompact ? (
+                <div className="text-xs text-muted-foreground">
+                  Broker-style working set with embedded search and quick trade actions.
+                </div>
+              ) : null}
             </div>
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 text-sm">
-                <span className="text-xs text-muted-foreground">Broker</span>
+                {!isCompact ? <span className="text-xs text-muted-foreground">Broker</span> : null}
                 <select
                   value={broker}
                   onChange={(e) => void updateLastUsedBroker(e.target.value)}
                   className={cn(
                     'h-9 rounded-md border bg-background px-2 text-sm outline-none',
                     'focus-visible:ring-2 focus-visible:ring-ring',
+                    isCompact && 'h-8 text-xs',
                   )}
                 >
                   {BROKER_OPTIONS.map((b) => (
@@ -403,6 +430,41 @@ export function WatchlistPage() {
                 <span className={cn('ml-2 text-xs', brokerState?.connected ? 'text-emerald-600' : 'text-muted-foreground')}>
                   {brokerState?.connected ? 'Connected' : 'Not connected'}
                 </span>
+              </div>
+              <div className="flex items-center gap-1 rounded-md border bg-background p-1">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={watchlistMode === 'compact' ? 'secondary' : 'ghost'}
+                  aria-label="Watchlist mode: compact"
+                  title="Compact"
+                  onClick={() => setWatchlistMode('compact')}
+                  className="h-8 w-8"
+                >
+                  <Minimize2 />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={watchlistMode === 'standard' ? 'secondary' : 'ghost'}
+                  aria-label="Watchlist mode: standard"
+                  title="Standard"
+                  onClick={() => setWatchlistMode('standard')}
+                  className="h-8 w-8"
+                >
+                  <Square />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={watchlistMode === 'wide' ? 'secondary' : 'ghost'}
+                  aria-label="Watchlist mode: wide"
+                  title="Wide"
+                  onClick={() => setWatchlistMode('wide')}
+                  className="h-8 w-8"
+                >
+                  <Maximize2 />
+                </Button>
               </div>
               <Button type="button" size="icon" variant="outline" aria-label="Watchlist settings" onClick={() => setSettingsOpen(true)}>
                 <Settings />
@@ -446,7 +508,11 @@ export function WatchlistPage() {
               <Input
                 value={addQ}
                 onChange={(e) => setAddQ(e.target.value)}
-                placeholder="Search instruments to add… (e.g. INFY, NIFTY, NIFTY 24150 CE)"
+                placeholder={
+                  isCompact
+                    ? 'Search to add…'
+                    : 'Search instruments to add… (e.g. INFY, NIFTY, NIFTY 24150 CE)'
+                }
                 aria-label="Watchlist add search"
               />
               <Button
@@ -461,9 +527,28 @@ export function WatchlistPage() {
                   setAddQ('')
                 }}
                 disabled={!activeId || !addQ.trim()}
+                className={cn(isCompact && 'hidden')}
               >
                 Add underlying
               </Button>
+              {isCompact ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="Add underlying"
+                  onClick={() => {
+                    if (!activeId) return
+                    const u = addQ.trim().toUpperCase()
+                    if (!u) return
+                    void addUnderlying.mutate({ watchlistId: activeId, underlying: u })
+                    setAddQ('')
+                  }}
+                  disabled={!activeId || !addQ.trim()}
+                >
+                  <Plus />
+                </Button>
+              ) : null}
             </div>
 
             {addQ.trim().length > 0 ? (
@@ -484,7 +569,9 @@ export function WatchlistPage() {
                   >
                     <div className="min-w-0">
                       <div className="truncate font-medium">{i.display_symbol}</div>
-                      <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{i.canonical_id}</div>
+                      {!isCompact ? (
+                        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{i.canonical_id}</div>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant="outline">{typeLabel(i, null)}</Badge>
@@ -533,21 +620,34 @@ export function WatchlistPage() {
                     const hasOpenOrder = canonicalId ? openOrderSet.has(canonicalId) : false
                     return (
                       <tr key={item.id} className="hover:bg-accent/20">
-                        <td className="px-2 py-2">
+                        <td className={cn('px-2 py-2', isCompact && 'py-1.5')}>
                           <div className="flex flex-wrap items-center gap-2">
-                            <div className="font-medium">{titleForItem(item)}</div>
-                            {hasPos ? <Badge variant="outline">POS</Badge> : null}
-                            {hasOpenOrder ? <Badge variant="outline">ORD</Badge> : null}
-                            {item.exchange ? <Badge variant="outline">{item.exchange}</Badge> : null}
+                            <div className="font-medium">
+                              {isCompact ? compactTitleForItem(item) : titleForItem(item)}
+                            </div>
+                            {!isCompact && hasPos ? <Badge variant="outline">POS</Badge> : null}
+                            {!isCompact && hasOpenOrder ? <Badge variant="outline">ORD</Badge> : null}
+                            {!isCompact && item.exchange ? <Badge variant="outline">{item.exchange}</Badge> : null}
+                            {isCompact && (hasPos || hasOpenOrder) ? (
+                              <span className="text-[11px] text-muted-foreground">
+                                {hasPos ? '• POS' : ''} {hasOpenOrder ? '• ORD' : ''}
+                              </span>
+                            ) : null}
                           </div>
-                          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                            {item.canonical_id ?? item.symbol_key}
-                          </div>
+                          {!isCompact ? (
+                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                              {item.canonical_id ?? item.symbol_key}
+                            </div>
+                          ) : item.instrument?.expiry ? (
+                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                              {formatExpiryHuman(item.instrument.expiry)}
+                            </div>
+                          ) : null}
                         </td>
-                        <td className="px-2 py-2">
+                        <td className={cn('px-2 py-2', isCompact && 'py-1.5')}>
                           <Badge variant="outline">{typeLabel(item.instrument, item.instrument_type)}</Badge>
                         </td>
-                        <td className="px-2 py-2 text-right">
+                        <td className={cn('px-2 py-2 text-right', isCompact && 'py-1.5')}>
                           <div className="flex justify-end gap-2">
                             <Button
                               type="button"
@@ -558,7 +658,7 @@ export function WatchlistPage() {
                               disabled={!item.instrument && !item.underlying}
                               aria-label="Buy"
                             >
-                              B
+                              {isWide ? 'Buy' : 'B'}
                             </Button>
                             <Button
                               type="button"
@@ -569,26 +669,30 @@ export function WatchlistPage() {
                               disabled={!item.instrument && !item.underlying}
                               aria-label="Sell"
                             >
-                              S
+                              {isWide ? 'Sell' : 'S'}
                             </Button>
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="outline"
-                              aria-label="View orders"
-                              onClick={() => navigate(`/orders?q=${encodeURIComponent(item.display_symbol)}`)}
-                            >
-                              <ReceiptText />
-                            </Button>
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="outline"
-                              aria-label="View positions"
-                              onClick={() => navigate(`/positions?q=${encodeURIComponent(item.display_symbol)}`)}
-                            >
-                              <Briefcase />
-                            </Button>
+                            {!isCompact ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="outline"
+                                  aria-label="View orders"
+                                  onClick={() => navigate(`/orders?q=${encodeURIComponent(item.display_symbol)}`)}
+                                >
+                                  <ReceiptText />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="outline"
+                                  aria-label="View positions"
+                                  onClick={() => navigate(`/positions?q=${encodeURIComponent(item.display_symbol)}`)}
+                                >
+                                  <Briefcase />
+                                </Button>
+                              </>
+                            ) : null}
                             <Button
                               type="button"
                               size="icon"
@@ -601,38 +705,40 @@ export function WatchlistPage() {
                             >
                               <Trash2 />
                             </Button>
-                            <div className="ml-2 flex items-center gap-1">
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                aria-label="Move up"
-                                disabled={idx === 0}
-                                onClick={() => {
-                                  if (!activeId) return
-                                  const next = items.map((i) => i.id)
-                                  ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
-                                  void reorder.mutate({ watchlistId: activeId, itemIds: next })
-                                }}
-                              >
-                                <ArrowUp />
-                              </Button>
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                aria-label="Move down"
-                                disabled={idx === items.length - 1}
-                                onClick={() => {
-                                  if (!activeId) return
-                                  const next = items.map((i) => i.id)
-                                  ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
-                                  void reorder.mutate({ watchlistId: activeId, itemIds: next })
-                                }}
-                              >
-                                <ArrowDown />
-                              </Button>
-                            </div>
+                            {!isCompact ? (
+                              <div className="ml-2 flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  aria-label="Move up"
+                                  disabled={idx === 0}
+                                  onClick={() => {
+                                    if (!activeId) return
+                                    const next = items.map((i) => i.id)
+                                    ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+                                    void reorder.mutate({ watchlistId: activeId, itemIds: next })
+                                  }}
+                                >
+                                  <ArrowUp />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  aria-label="Move down"
+                                  disabled={idx === items.length - 1}
+                                  onClick={() => {
+                                    if (!activeId) return
+                                    const next = items.map((i) => i.id)
+                                    ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
+                                    void reorder.mutate({ watchlistId: activeId, itemIds: next })
+                                  }}
+                                >
+                                  <ArrowDown />
+                                </Button>
+                              </div>
+                            ) : null}
                           </div>
                         </td>
                       </tr>
