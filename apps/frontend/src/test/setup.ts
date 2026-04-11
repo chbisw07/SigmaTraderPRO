@@ -9,6 +9,27 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+type MockWatchlist = { id: number; name: string; is_default: boolean }
+type MockWatchlistItem = {
+  id: number
+  watchlist_id: number
+  position: number
+  canonical_id: string | null
+  display_symbol: string
+}
+
+let mockWatchlists: MockWatchlist[] = [{ id: 1, name: 'Default', is_default: true }]
+let mockWatchlistItems: MockWatchlistItem[] = []
+let nextWatchlistId = 2
+let nextWatchlistItemId = 1
+
+function resetWatchlists() {
+  mockWatchlists = [{ id: 1, name: 'Default', is_default: true }]
+  mockWatchlistItems = []
+  nextWatchlistId = 2
+  nextWatchlistItemId = 1
+}
+
 beforeAll(() => {
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const raw = typeof input === 'string' ? input : input.toString()
@@ -88,6 +109,223 @@ beforeAll(() => {
           include_broker_orders: true,
         },
       })
+    }
+
+    if (path === '/api/v1/watchlists' && (!init?.method || init.method === 'GET')) {
+      return jsonResponse({ items: mockWatchlists })
+    }
+
+    if (path === '/api/v1/watchlists' && init?.method === 'POST') {
+      const body = typeof init.body === 'string' ? init.body : '{}'
+      const parsed = JSON.parse(body) as { name?: string; make_default?: boolean }
+      const name = String(parsed.name ?? '').trim() || 'Watchlist'
+      const makeDefault = Boolean(parsed.make_default)
+      if (makeDefault) {
+        mockWatchlists = mockWatchlists.map((w) => ({ ...w, is_default: false }))
+      }
+      const wl = { id: nextWatchlistId++, name, is_default: makeDefault }
+      mockWatchlists = [...mockWatchlists, wl]
+      if (!mockWatchlists.some((w) => w.is_default)) {
+        mockWatchlists[0] = { ...mockWatchlists[0], is_default: true }
+      }
+      return jsonResponse(wl, 201)
+    }
+
+    if (path.startsWith('/api/v1/watchlists/') && init?.method === 'PATCH') {
+      const idStr = path.split('/')[4]
+      const wlId = Number(idStr)
+      const body = typeof init.body === 'string' ? init.body : '{}'
+      const parsed = JSON.parse(body) as { name?: string; is_default?: boolean }
+      if (parsed.is_default) {
+        mockWatchlists = mockWatchlists.map((w) => ({ ...w, is_default: w.id === wlId }))
+      }
+      mockWatchlists = mockWatchlists.map((w) =>
+        w.id === wlId && parsed.name ? { ...w, name: String(parsed.name) } : w,
+      )
+      const wl = mockWatchlists.find((w) => w.id === wlId)
+      if (!wl) return jsonResponse({ detail: 'Not found' }, 404)
+      return jsonResponse(wl)
+    }
+
+    if (path.startsWith('/api/v1/watchlists/') && init?.method === 'DELETE') {
+      const idStr = path.split('/')[4]
+      const wlId = Number(idStr)
+      mockWatchlists = mockWatchlists.filter((w) => w.id !== wlId)
+      mockWatchlistItems = mockWatchlistItems.filter((i) => i.watchlist_id !== wlId)
+      if (!mockWatchlists.length) {
+        resetWatchlists()
+      } else if (!mockWatchlists.some((w) => w.is_default)) {
+        mockWatchlists[0] = { ...mockWatchlists[0], is_default: true }
+      }
+      return new Response(null, { status: 204 })
+    }
+
+    if (path.startsWith('/api/v1/watchlists/default/items') && init?.method === 'POST') {
+      const def = mockWatchlists.find((w) => w.is_default) ?? mockWatchlists[0]
+      const body = typeof init.body === 'string' ? init.body : '{}'
+      const parsed = JSON.parse(body) as { canonical_id?: string | null }
+      const canonicalId = parsed.canonical_id ?? null
+      if (!canonicalId) return jsonResponse({ detail: 'canonical_id required' }, 400)
+
+      const exists = mockWatchlistItems.find((i) => i.watchlist_id === def.id && i.canonical_id === canonicalId)
+      if (exists) {
+        return jsonResponse({
+          id: exists.id,
+          position: exists.position,
+          symbol_key: canonicalId,
+          canonical_id: canonicalId,
+          instrument: null,
+          display_symbol: canonicalId.split(':').slice(-1)[0],
+          exchange: null,
+          segment: null,
+          instrument_type: null,
+          underlying: null,
+          expiry: null,
+          strike: null,
+          option_type: null,
+        }, 201)
+      }
+
+      const position = Math.max(0, ...mockWatchlistItems.filter((i) => i.watchlist_id === def.id).map((i) => i.position)) + 1
+      const item: MockWatchlistItem = {
+        id: nextWatchlistItemId++,
+        watchlist_id: def.id,
+        position,
+        canonical_id: canonicalId,
+        display_symbol: canonicalId.split(':').slice(-1)[0],
+      }
+      mockWatchlistItems = [...mockWatchlistItems, item]
+      return jsonResponse({
+        id: item.id,
+        position: item.position,
+        symbol_key: canonicalId,
+        canonical_id: canonicalId,
+        instrument: {
+          canonical_id: canonicalId,
+          exchange: 'NSE_EQ',
+          segment: 'EQUITY',
+          instrument_type: 'EQUITY',
+          symbol_root: item.display_symbol,
+          display_symbol: item.display_symbol,
+          underlying: null,
+          expiry: null,
+          strike: null,
+          option_type: null,
+          lot_size: 1,
+          tick_size: 0.05,
+          isin: null,
+          is_active: true,
+          created_at: '2026-04-09T00:00:00Z',
+          updated_at: '2026-04-09T00:00:00Z',
+        },
+        display_symbol: item.display_symbol,
+        exchange: 'NSE_EQ',
+        segment: 'EQUITY',
+        instrument_type: 'EQUITY',
+        underlying: null,
+        expiry: null,
+        strike: null,
+        option_type: null,
+      }, 201)
+    }
+
+    if (path.startsWith('/api/v1/watchlists/') && path.endsWith('/items') && (!init?.method || init.method === 'GET')) {
+      const wlId = Number(path.split('/')[4])
+      const wl = mockWatchlists.find((w) => w.id === wlId)
+      if (!wl) return jsonResponse({ detail: 'Not found' }, 404)
+      const items = mockWatchlistItems
+        .filter((i) => i.watchlist_id === wlId)
+        .sort((a, b) => a.position - b.position)
+        .map((i) => ({
+          id: i.id,
+          position: i.position,
+          symbol_key: i.canonical_id ?? `ITEM:${i.id}`,
+          canonical_id: i.canonical_id,
+          instrument: i.canonical_id
+            ? {
+                canonical_id: i.canonical_id,
+                exchange: 'NSE_EQ',
+                segment: 'EQUITY',
+                instrument_type: 'EQUITY',
+                symbol_root: i.display_symbol,
+                display_symbol: i.display_symbol,
+                underlying: null,
+                expiry: null,
+                strike: null,
+                option_type: null,
+                lot_size: 1,
+                tick_size: 0.05,
+                isin: null,
+                is_active: true,
+                created_at: '2026-04-09T00:00:00Z',
+                updated_at: '2026-04-09T00:00:00Z',
+              }
+            : null,
+          display_symbol: i.display_symbol,
+          exchange: 'NSE_EQ',
+          segment: 'EQUITY',
+          instrument_type: 'EQUITY',
+          underlying: null,
+          expiry: null,
+          strike: null,
+          option_type: null,
+        }))
+      return jsonResponse({ watchlist: wl, items })
+    }
+
+    if (path.startsWith('/api/v1/watchlists/') && path.endsWith('/items') && init?.method === 'POST') {
+      const wlId = Number(path.split('/')[4])
+      const wl = mockWatchlists.find((w) => w.id === wlId)
+      if (!wl) return jsonResponse({ detail: 'Not found' }, 404)
+      const body = typeof init.body === 'string' ? init.body : '{}'
+      const parsed = JSON.parse(body) as { canonical_id?: string | null }
+      const canonicalId = parsed.canonical_id ?? null
+      if (!canonicalId) return jsonResponse({ detail: 'canonical_id required' }, 400)
+      const def = mockWatchlists.find((w) => w.id === wlId)!
+      const position = Math.max(0, ...mockWatchlistItems.filter((i) => i.watchlist_id === def.id).map((i) => i.position)) + 1
+      const item: MockWatchlistItem = {
+        id: nextWatchlistItemId++,
+        watchlist_id: def.id,
+        position,
+        canonical_id: canonicalId,
+        display_symbol: canonicalId.split(':').slice(-1)[0],
+      }
+      mockWatchlistItems = [...mockWatchlistItems, item]
+      return jsonResponse({
+        id: item.id,
+        position: item.position,
+        symbol_key: canonicalId,
+        canonical_id: canonicalId,
+        instrument: null,
+        display_symbol: item.display_symbol,
+        exchange: null,
+        segment: null,
+        instrument_type: null,
+        underlying: null,
+        expiry: null,
+        strike: null,
+        option_type: null,
+      }, 201)
+    }
+
+    if (path.includes('/items/') && init?.method === 'DELETE' && path.startsWith('/api/v1/watchlists/')) {
+      const parts = path.split('/')
+      const wlId = Number(parts[4])
+      const itemId = Number(parts[6])
+      mockWatchlistItems = mockWatchlistItems.filter((i) => !(i.watchlist_id === wlId && i.id === itemId))
+      return new Response(null, { status: 204 })
+    }
+
+    if (path.endsWith('/items/reorder') && init?.method === 'POST' && path.startsWith('/api/v1/watchlists/')) {
+      const wlId = Number(path.split('/')[4])
+      const body = typeof init.body === 'string' ? init.body : '{}'
+      const parsed = JSON.parse(body) as { item_ids?: number[] }
+      const ids = parsed.item_ids ?? []
+      let pos = 1
+      for (const id of ids) {
+        mockWatchlistItems = mockWatchlistItems.map((i) => (i.watchlist_id === wlId && i.id === id ? { ...i, position: pos++ } : i))
+      }
+      return jsonResponse({ status: 'ok' })
     }
 
     if (path === '/api/v1/brokers/status') {
@@ -787,5 +1025,6 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.clearAllMocks()
+  resetWatchlists()
   localStorage.clear()
 })

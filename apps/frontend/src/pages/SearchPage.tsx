@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import * as instrumentsApi from '@/lib/api/instruments'
+import * as watchlistsApi from '@/lib/api/watchlists'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useQuoteStore } from '@/store/quoteStore'
@@ -120,6 +121,20 @@ type BrokerKey = (typeof BROKER_OPTIONS)[number]['key']
 
 const EMPTY_INSTRUMENTS: instrumentsApi.InstrumentOut[] = []
 
+const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
+
+function safeStoredActiveWatchlistId(): number | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_WATCHLIST_KEY)
+    if (!raw) return null
+    const v = Number(raw)
+    return Number.isFinite(v) ? v : null
+  } catch {
+    return null
+  }
+}
+
 export function SearchPage() {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
@@ -134,6 +149,7 @@ export function SearchPage() {
 
   const [syncBusy, setSyncBusy] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
+  const [watchlistMsg, setWatchlistMsg] = useState<string | null>(null)
   const [syncUnderlyings, setSyncUnderlyings] = useState('NIFTY,BANKNIFTY')
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
   const [stockLaunch, setStockLaunch] = useState<
@@ -163,6 +179,25 @@ export function SearchPage() {
     'all' | instrumentsApi.InstrumentType
   >('all')
   const debouncedQ = useDebounced(q.trim(), 300)
+
+  const addToWatchlist = useMutation({
+    mutationFn: async (canonicalId: string) => {
+      if (!accessToken) throw new Error('no auth')
+      const activeId = safeStoredActiveWatchlistId()
+      if (activeId) {
+        try {
+          return await watchlistsApi.addWatchlistItem(accessToken, activeId, {
+            canonical_id: canonicalId,
+          })
+        } catch {
+          // Fall back to default watchlist if active is stale/missing.
+        }
+      }
+      return watchlistsApi.addWatchlistItemDefault(accessToken, { canonical_id: canonicalId })
+    },
+    onSuccess: () => setWatchlistMsg('Added to watchlist'),
+    onError: () => setWatchlistMsg('Add to watchlist failed'),
+  })
 
   const search = useQuery({
     queryKey: ['instruments', 'search', debouncedQ, filterType],
@@ -531,45 +566,59 @@ export function SearchPage() {
                         {i.canonical_id}
                       </div>
                     </div>
-                    {canStockTrade ? (
+                    <div className="flex items-center gap-2">
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
-                        onClick={() => {
-                          setStockLaunch({
-                            mode: 'contract',
-                            instrument: i,
-                            broker: selectedBroker,
-                          })
-                          setStockDialogOpen(true)
-                        }}
+                        onClick={() => void addToWatchlist.mutate(i.canonical_id)}
+                        disabled={!accessToken}
                       >
-                        Trade
+                        Add
                       </Button>
-                    ) : canFnoTrade ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          const ref = getPremium(i.canonical_id)
-                          setFnoLaunch({
-                            mode: 'contract',
-                            instrument: i,
-                            broker: selectedBroker,
-                            referencePrice: ref,
-                          })
-                          setFnoDialogOpen(true)
-                        }}
-                      >
-                        Trade
-                      </Button>
-                    ) : null}
+                      {canStockTrade ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setStockLaunch({
+                              mode: 'contract',
+                              instrument: i,
+                              broker: selectedBroker,
+                            })
+                            setStockDialogOpen(true)
+                          }}
+                        >
+                          Trade
+                        </Button>
+                      ) : canFnoTrade ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const ref = getPremium(i.canonical_id)
+                            setFnoLaunch({
+                              mode: 'contract',
+                              instrument: i,
+                              broker: selectedBroker,
+                              referencePrice: ref,
+                            })
+                            setFnoDialogOpen(true)
+                          }}
+                        >
+                          Trade
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                 )
               })}
             </div>
+          ) : null}
+          {watchlistMsg ? (
+            <div className="text-xs text-muted-foreground">{watchlistMsg}</div>
           ) : null}
         </CardContent>
       </Card>
@@ -742,6 +791,15 @@ export function SearchPage() {
                         {(i.underlying ?? i.symbol_root).toUpperCase()} {i.expiry ?? '—'}{' '}
                         {formatStrikeDisplay(i.strike)} {i.option_type ?? '—'}
                       </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void addToWatchlist.mutate(i.canonical_id)}
+                        disabled={!accessToken}
+                      >
+                        Add
+                      </Button>
                       <Button
                         type="button"
                         size="sm"

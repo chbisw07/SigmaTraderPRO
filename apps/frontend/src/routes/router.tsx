@@ -9,6 +9,7 @@ import { PositionsPage } from '@/pages/PositionsPage'
 import { SearchPage } from '@/pages/SearchPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StrategiesPage } from '@/pages/StrategiesPage'
+import { WatchlistPage } from '@/pages/WatchlistPage'
 import { RequireAuth } from '@/routes/RequireAuth'
 import { RootLayout } from '@/routes/RootLayout'
 
@@ -25,11 +26,12 @@ export const routeConfig: RouteObject[] = [
         element: <RootLayout />,
         children: [
           { index: true, element: <DashboardPage /> },
-          { path: 'brokers', element: <BrokersPage /> },
+          { path: 'watchlist', element: <WatchlistPage /> },
           { path: 'search', element: <SearchPage /> },
           { path: 'strategies', element: <StrategiesPage /> },
           { path: 'positions', element: <PositionsPage /> },
           { path: 'orders', element: <OrdersPage /> },
+          { path: 'brokers', element: <BrokersPage /> },
           { path: 'settings', element: <SettingsPage /> },
         ],
       },
