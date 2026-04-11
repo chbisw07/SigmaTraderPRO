@@ -7,12 +7,14 @@ from sqlalchemy.orm import Session
 from app.brokers.types import BrokerKey, BrokerStatus
 from app.models.user import User
 from app.orders.types import (
+    BrokerQuoteRequest,
     DerivativeOrderRequest,
     DerivativeOrderResult,
     EquityOrderRequest,
     EquityOrderResult,
     ExternalBrokerOrder,
     ExternalBrokerPosition,
+    ExternalBrokerQuote,
 )
 
 
@@ -79,5 +81,17 @@ class BrokerAdapter(ABC):
 
         Broker remains the truth for open positions; this is used to improve the
         local Positions ledger. Implementations must not return secrets.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_quotes(
+        self, db: Session, user: User, *, requests: list[BrokerQuoteRequest]
+    ) -> list[ExternalBrokerQuote]:
+        """
+        Fetch LTP/quote data for canonical instruments using broker session.
+
+        This is intentionally bounded and used for terminal surfaces like the
+        Watchlist. Implementations must not return secrets.
         """
         raise NotImplementedError

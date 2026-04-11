@@ -1,6 +1,6 @@
-import { type ComponentProps, useMemo, useState } from 'react'
+import { type ComponentProps, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,9 +28,15 @@ function instrumentTitle(i: ordersApi.InstrumentOut | null): string {
 export function PositionsPage() {
   const accessToken = useAuthStore((s) => s.accessToken)
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
-  const [q, setQ] = useState('')
+  const [q, setQ] = useState(() => searchParams.get('q') ?? '')
   const [broker, setBroker] = useState<ordersApi.BrokerKey | ''>('')
+
+  useEffect(() => {
+    const next = searchParams.get('q') ?? ''
+    setQ(next)
+  }, [searchParams])
 
   const positions = useQuery({
     queryKey: ['positions', { q, broker }],

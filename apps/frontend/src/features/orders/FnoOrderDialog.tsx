@@ -26,7 +26,14 @@ type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   launch:
-    | { mode: 'manual'; broker?: ordersApi.BrokerKey | null }
+    | {
+        mode: 'manual'
+        broker?: ordersApi.BrokerKey | null
+        prefill?: {
+          underlying?: string
+          side?: ordersApi.OrderSide
+        }
+      }
     | {
         mode: 'contract'
         instrument: instrumentsApi.InstrumentOut
@@ -65,7 +72,8 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
   const setFnoOrderTypePref = useOrderPrefsStore((s) => s.setFnoOrderType)
 
   const instrument = launch.mode === 'contract' ? launch.instrument : null
-  const prefill = launch.mode === 'contract' ? (launch.prefill ?? null) : null
+  const contractPrefill = launch.mode === 'contract' ? (launch.prefill ?? null) : null
+  const manualPrefill = launch.mode === 'manual' ? (launch.prefill ?? null) : null
 
   const getPremium = useQuoteStore((s) => s.getPremium)
   const setPremium = useQuoteStore((s) => s.setPremium)
@@ -86,6 +94,8 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
       ? (instrument.underlying ?? instrument.symbol_root ?? '')
           .trim()
           .toUpperCase()
+      : launch.mode === 'manual'
+        ? (manualPrefill?.underlying ?? '').trim().toUpperCase()
       : ''
   const initialExpiry =
     launch.mode === 'contract' && instrument ? (instrument.expiry ?? '') : ''
@@ -108,13 +118,13 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
   const [optionType, setOptionType] = useState<'CE' | 'PE'>(initialOptionType)
   const [strike, setStrike] = useState<number | null>(initialStrike)
 
-  const [side, setSide] = useState<ordersApi.OrderSide>(prefill?.side ?? 'BUY')
-  const [lots, setLots] = useState(prefill?.lots ?? 1)
-  const [product, setProduct] = useState<'MIS' | 'NRML'>(prefill?.product ?? fnoProductPref)
-  const [orderType, setOrderType] = useState<ordersApi.OrderType>(prefill?.order_type ?? fnoOrderTypePref)
+  const [side, setSide] = useState<ordersApi.OrderSide>(contractPrefill?.side ?? manualPrefill?.side ?? 'BUY')
+  const [lots, setLots] = useState(contractPrefill?.lots ?? 1)
+  const [product, setProduct] = useState<'MIS' | 'NRML'>(contractPrefill?.product ?? fnoProductPref)
+  const [orderType, setOrderType] = useState<ordersApi.OrderType>(contractPrefill?.order_type ?? fnoOrderTypePref)
   const [limitPrice, setLimitPrice] = useState<number | null>(
-    (prefill?.order_type ?? fnoOrderTypePref) === 'LIMIT'
-      ? (prefill?.limit_price ?? initialPremium)
+    (contractPrefill?.order_type ?? fnoOrderTypePref) === 'LIMIT'
+      ? (contractPrefill?.limit_price ?? initialPremium)
       : null,
   )
 
@@ -266,16 +276,16 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
       // If we have a cached reference premium, treat it as a safe default for LIMIT
       // so preview/create uses the same number the UI is showing.
       limit_price: orderType === 'LIMIT' ? (limitPrice ?? hydratedPremium) : null,
-      source: prefill?.intent?.source ?? 'manual_ui',
-      intent_type: prefill?.intent?.intent_type ?? 'ENTRY',
-      trigger_mode: prefill?.intent?.trigger_mode ?? null,
-      risk_mode: prefill?.intent?.risk_mode ?? null,
-      sl_value: prefill?.intent?.sl_value ?? null,
-      tp_value: prefill?.intent?.tp_value ?? null,
-      trailing_value: prefill?.intent?.trailing_value ?? null,
-      parent_order_id: prefill?.intent?.parent_order_id ?? null,
-      linked_position_id: prefill?.intent?.linked_position_id ?? null,
-      broker_context: prefill?.intent?.broker_context ?? null,
+      source: contractPrefill?.intent?.source ?? 'manual_ui',
+      intent_type: contractPrefill?.intent?.intent_type ?? 'ENTRY',
+      trigger_mode: contractPrefill?.intent?.trigger_mode ?? null,
+      risk_mode: contractPrefill?.intent?.risk_mode ?? null,
+      sl_value: contractPrefill?.intent?.sl_value ?? null,
+      tp_value: contractPrefill?.intent?.tp_value ?? null,
+      trailing_value: contractPrefill?.intent?.trailing_value ?? null,
+      parent_order_id: contractPrefill?.intent?.parent_order_id ?? null,
+      linked_position_id: contractPrefill?.intent?.linked_position_id ?? null,
+      broker_context: contractPrefill?.intent?.broker_context ?? null,
     }),
     [
       broker,
@@ -290,7 +300,7 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
       orderType,
       limitPrice,
       hydratedPremium,
-      prefill?.intent,
+      contractPrefill?.intent,
     ],
   )
 

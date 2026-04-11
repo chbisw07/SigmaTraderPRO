@@ -31,6 +31,10 @@ class AngelPositionBookError(RuntimeError):
     pass
 
 
+class AngelQuoteError(RuntimeError):
+    pass
+
+
 def _headers(api_key: str) -> dict[str, str]:
     return {
         "Content-Type": "application/json",
@@ -191,3 +195,48 @@ def fetch_position_book(*, api_key: str, jwt_token: str) -> list[dict[str, Any]]
     if not isinstance(inner, list):
         raise AngelPositionBookError("Angel positionbook payload must be a list")
     return [row for row in inner if isinstance(row, dict)]
+
+
+def fetch_quotes(
+    *,
+    api_key: str,
+    jwt_token: str,
+    exchange_tokens: dict[str, list[str]],
+    mode: str = "FULL",
+) -> list[dict[str, Any]]:
+    """
+    Fetch quote snapshots from SmartAPI.
+
+    `exchange_tokens` example:
+      {"NSE": ["1594"], "NFO": ["12345", "67890"]}
+    """
+    url = "https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/"
+    headers = _headers(api_key)
+    headers["Authorization"] = f"Bearer {jwt_token}"
+    payload: dict[str, Any] = {"mode": mode, "exchangeTokens": exchange_tokens}
+
+    try:
+        with httpx.Client(timeout=settings.angel_http_timeout_seconds) as client:
+            resp = client.post(url, json=payload, headers=headers)
+    except httpx.HTTPError as exc:
+        raise AngelQuoteError("Angel quote transport error") from exc
+
+    if resp.status_code != 200:
+        raise AngelQuoteError(f"Angel quote failed ({resp.status_code})")
+
+    data: dict[str, Any] = resp.json()
+    if data.get("status") is not True:
+        msg = str(data.get("message") or "Angel quote failed")
+        raise AngelQuoteError(msg)
+
+    inner = data.get("data") or {}
+    if isinstance(inner, list):
+        # Some SmartAPI versions return a list directly.
+        return [row for row in inner if isinstance(row, dict)]
+    if not isinstance(inner, dict):
+        raise AngelQuoteError("Angel quote payload must be an object")
+
+    fetched = inner.get("fetched") or inner.get("data") or []
+    if not isinstance(fetched, list):
+        fetched = []
+    return [row for row in fetched if isinstance(row, dict)]

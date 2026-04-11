@@ -166,3 +166,42 @@
 ### Next
 - Add a safe “refresh all positions” endpoint + UI (optional)
 - Expand position sync to surface broker order IDs / fill attribution (deferred)
+
+---
+
+## S4.2.2 Watchlist workspace + quick trade actions
+
+### Completed
+- Added persisted user-scoped Watchlists (backend + migration):
+  - `watchlists` + `watchlist_items` tables with ordered rows (`position`) and default list support
+  - CRUD + reorder APIs under `GET/POST/PATCH/DELETE /api/v1/watchlists` and items subroutes
+- Added Watchlist workspace page (`/watchlist`) as a practical daily working set:
+  - broker-inspired card/workspace layout (tabs + embedded add/search + compact rows)
+  - multiple watchlists as tabs; management is secondary via a settings dialog (rename/delete/set default/create)
+  - supports canonical instruments plus “underlying-only” rows for F&O-capable underlyings
+- Refined the persistent Watchlist workspace into a terminal-style component:
+  - `compact` / `standard` / `wide` modes (mode affects both width and information density)
+  - bounded resize within app-controlled caps to keep the shell stable
+  - broker-style refinements: hover/focus row actions, embedded add+filter search, and compact filter/sort menu
+- Integrated Search → Watchlist handoff:
+  - Search results include `Add` action that adds to active watchlist when available, otherwise default watchlist
+- Added row quick actions (reuses existing dialogs/routes; no duplicate ticket logic):
+  - Buy/Sell opens Stock or F&O ticket in contract-driven mode when a contract is known
+  - Underlying rows open a prefilled manual F&O ticket
+  - Orders/Positions shortcuts use existing workspace filters (`/orders?q=…`, `/positions?q=…`)
+
+### Important highlights
+- Canonical-first persistence: watchlist items store `canonical_id` when available; broker symbols never become the primary identity
+- Underlyings are treated as first-class navigation anchors for F&O workflows without forcing a specific contract selection
+- Quick actions reuse the S4.1/S4.2 ticket launch modes (`manual` vs `contract`) to keep behavior consistent and future-safe
+
+### Next
+- Optional: add bulk “add from Search” to a chosen watchlist (menu) and/or batch reorder (drag handle)
+- Optional: lightweight row indicators from Orders/Positions (counts + status) without introducing live quotes
+- Deferred: live quotes, TradingView-bound watchlists, scanner-generated lists, AI annotations (per S4.2.2 non-goals)
+
+### S4.2.2A Watchlist quote snapshot (follow-up)
+- Added a bounded broker-quote snapshot API (`GET /api/v1/quotes`) used by the persistent Watchlist to show LTP + change/% change when broker is connected.
+- Quote fetching is canonical-first (requested by `canonical_id`) and resolves broker tokens internally; no broker symbols are exposed as the primary UI model.
+- Quotes are cached in Redis with short TTL (lean market data philosophy); UI degrades gracefully to `—` when unavailable.
+- Refined the Watchlist embedded search results to be broker-inspired (scoped tabs + compact result rows + quick B/S) while preserving SigmaTraderPRO styling and canonical-first contracts.

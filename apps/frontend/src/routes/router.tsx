@@ -25,11 +25,12 @@ export const routeConfig: RouteObject[] = [
         element: <RootLayout />,
         children: [
           { index: true, element: <DashboardPage /> },
-          { path: 'brokers', element: <BrokersPage /> },
+          { path: 'watchlist', element: <Navigate to="/search" replace /> },
           { path: 'search', element: <SearchPage /> },
           { path: 'strategies', element: <StrategiesPage /> },
           { path: 'positions', element: <PositionsPage /> },
           { path: 'orders', element: <OrdersPage /> },
+          { path: 'brokers', element: <BrokersPage /> },
           { path: 'settings', element: <SettingsPage /> },
         ],
       },
