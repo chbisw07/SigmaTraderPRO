@@ -325,8 +325,9 @@ def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | 
     tick_size = _parse_float(row.get("tick_size"))
 
     if inst_type_raw in {"CE", "PE"}:
-        strike = _strike_to_paise(row.get("strike"))
-        if strike is None or not expiry or not name:
+        strike_raw = _parse_float(row.get("strike"))
+        strike = _strike_to_paise(strike_raw)
+        if strike is None or strike_raw is None or not expiry or not name:
             return None
         opt_type = OptionType(inst_type_raw)
         segment = Segment.OPTION
@@ -335,7 +336,8 @@ def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | 
             instrument_type=inst_type,
             symbol_root=name,
             expiry=expiry,
-            strike=strike,
+            # Display should match broker strike units (not internal x100 storage).
+            strike=strike_raw,
             option_type=opt_type,
         )
         canonical = _canonical_id(

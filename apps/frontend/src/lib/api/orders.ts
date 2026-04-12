@@ -275,6 +275,7 @@ export async function listOrdersWorkspace(
     mode?: OrdersSourceMode
     broker?: BrokerKey
     status?: string
+    product?: string
     instrument_type?: string
     q?: string
     limit?: number
@@ -284,6 +285,7 @@ export async function listOrdersWorkspace(
   query.set('mode', params.mode ?? 'merged')
   if (params.broker) query.set('broker', params.broker)
   if (params.status) query.set('status', params.status)
+  if (params.product) query.set('product', params.product)
   if (params.instrument_type) query.set('instrument_type', params.instrument_type)
   if (params.q) query.set('q', params.q)
   if (params.limit) query.set('limit', String(params.limit))

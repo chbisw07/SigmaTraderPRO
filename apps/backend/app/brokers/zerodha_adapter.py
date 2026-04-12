@@ -8,11 +8,13 @@ from app.brokers.base import BrokerAdapter, BrokerError, BrokerNotConfiguredErro
 from app.brokers.types import BrokerKey, BrokerSessionState, BrokerStatus
 from app.brokers.zerodha_client import (
     ZerodhaAuthError,
+    ZerodhaHoldingsError,
     ZerodhaOrderBookError,
     ZerodhaOrderError,
     ZerodhaPositionBookError,
     ZerodhaQuoteError,
     exchange_request_token,
+    fetch_holdings,
     fetch_orders,
     fetch_positions,
     fetch_quotes,
@@ -521,6 +523,34 @@ class ZerodhaAdapter(BrokerAdapter):
                 )
             )
         return out
+
+    def fetch_holdings(self, db: Session, user: User) -> list[dict]:
+        conn = _get_connection(db, user.id)
+        if not conn or not conn.credentials_enc:
+            raise BrokerNotConfiguredError("Broker is not configured")
+        status = _compute_status(conn)
+        if not status.connected or status.stale:
+            raise BrokerNotConfiguredError("Broker session is not connected")
+        if not conn.session_enc:
+            raise BrokerNotConfiguredError("Broker session is missing")
+
+        try:
+            creds = decrypt_json(
+                conn.credentials_enc, key=settings.broker_encryption_key
+            )
+            session = decrypt_json(conn.session_enc, key=settings.broker_encryption_key)
+        except CryptoError as exc:
+            raise BrokerNotConfiguredError("Broker session decrypt failed") from exc
+
+        api_key = str(creds.get("api_key") or "")
+        access_token = str(session.get("access_token") or "")
+        if not api_key or not access_token:
+            raise BrokerNotConfiguredError("Broker session token missing")
+
+        try:
+            return fetch_holdings(api_key=api_key, access_token=access_token)
+        except ZerodhaHoldingsError as exc:
+            raise BrokerError(str(exc)) from exc
 
     def fetch_positions(self, db: Session, user: User) -> list[ExternalBrokerPosition]:
         conn = _get_connection(db, user.id)

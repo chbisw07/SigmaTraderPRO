@@ -148,7 +148,7 @@ class PositionService:
         *,
         user: User,
         broker: BrokerKey,
-    ) -> tuple[int, int, str | None]:
+    ) -> tuple[int, int, int, set[str], str | None]:
         """
         Pull broker positionbook and update the local positions ledger.
 
@@ -169,6 +169,8 @@ class PositionService:
 
         upserted = 0
         closed = 0
+        skipped_unmapped = 0
+        unmapped_tokens: set[str] = set()
 
         seen_canonical_ids: set[str] = set()
 
@@ -230,6 +232,9 @@ class PositionService:
                 trading_symbol=row.trading_symbol,
             )
             if not inst:
+                skipped_unmapped += 1
+                if row.broker_instrument_id:
+                    unmapped_tokens.add(str(row.broker_instrument_id))
                 continue
             seen_canonical_ids.add(inst.canonical_id)
             _upsert(inst, row)
@@ -255,7 +260,7 @@ class PositionService:
 
         if upserted or closed:
             db.commit()
-        return upserted, closed, None
+        return upserted, closed, skipped_unmapped, unmapped_tokens, None
 
 
 position_service = PositionService()

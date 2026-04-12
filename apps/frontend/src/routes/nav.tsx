@@ -8,6 +8,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/brokers', label: 'Brokers' },
   { to: '/orders', label: 'Orders' },
   { to: '/positions', label: 'Positions' },
+  { to: '/holdings', label: 'Holdings' },
   { to: '/system-events', label: 'System Events' },
   { to: '/search', label: 'Search' },
   { to: '/settings', label: 'Settings' },

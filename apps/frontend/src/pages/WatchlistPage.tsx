@@ -25,6 +25,7 @@ import * as positionsApi from '@/lib/api/positions'
 import * as quotesApi from '@/lib/api/quotes'
 import * as watchlistsApi from '@/lib/api/watchlists'
 import { cn } from '@/lib/utils'
+import { formatStrikeHuman } from '@/lib/format'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 import { useAuthStore } from '@/store/authStore'
@@ -73,19 +74,10 @@ function formatExpiryHuman(iso: string | null): string {
   }
 }
 
-function formatStrikeHuman(strike: number | null): string {
-  if (strike == null) return '—'
-  if (strike >= 100_000) {
-    const v = strike / 100
-    return Number.isInteger(v) ? String(v) : v.toFixed(2)
-  }
-  return String(strike)
-}
-
 function titleForInstrument(i: instrumentsApi.InstrumentOut) {
   const root = (i.underlying ?? i.symbol_root).toUpperCase()
   if (i.instrument_type === 'OPTION') {
-    return `${root} ${formatExpiryHuman(i.expiry)} ${formatStrikeHuman(i.strike)} ${i.option_type ?? ''}`.trim()
+    return `${root} ${formatExpiryHuman(i.expiry)} ${formatStrikeHuman(i.strike, root)} ${i.option_type ?? ''}`.trim()
   }
   if (i.instrument_type === 'FUTURE') {
     return `${root} ${formatExpiryHuman(i.expiry)} FUT`.trim()
@@ -117,7 +109,7 @@ function titleForItem(item: watchlistsApi.WatchlistItemOut) {
   if (!inst) return item.display_symbol
   const root = (inst.underlying ?? inst.symbol_root).toUpperCase()
   if (inst.instrument_type === 'OPTION') {
-    return `${root} ${formatExpiryHuman(inst.expiry)} ${formatStrikeHuman(inst.strike)} ${inst.option_type ?? ''}`.trim()
+    return `${root} ${formatExpiryHuman(inst.expiry)} ${formatStrikeHuman(inst.strike, root)} ${inst.option_type ?? ''}`.trim()
   }
   if (inst.instrument_type === 'FUTURE') {
     return `${root} ${formatExpiryHuman(inst.expiry)} FUT`.trim()
@@ -130,7 +122,7 @@ function compactTitleForItem(item: watchlistsApi.WatchlistItemOut) {
   if (!inst) return item.display_symbol
   const root = (inst.underlying ?? inst.symbol_root).toUpperCase()
   if (inst.instrument_type === 'OPTION') {
-    const strike = formatStrikeHuman(inst.strike)
+    const strike = formatStrikeHuman(inst.strike, root)
     return `${root} ${strike} ${inst.option_type ?? ''}`.trim()
   }
   if (inst.instrument_type === 'FUTURE') {
@@ -890,7 +882,9 @@ export function WatchlistPage() {
                           </span>
                           <span className="mr-2">{typeLabel(inst, item.instrument_type)}</span>
                           {inst?.expiry ? <span className="mr-2">• {formatExpiryHuman(inst.expiry)}</span> : null}
-                          {inst?.strike != null ? <span className="mr-2">• {formatStrikeHuman(inst.strike)}</span> : null}
+                          {inst?.strike != null ? (
+                            <span className="mr-2">• {formatStrikeHuman(inst.strike, inst.underlying ?? inst.symbol_root)}</span>
+                          ) : null}
                           {inst?.option_type ? <span className="mr-2">• {inst.option_type}</span> : null}
                           {hasPos ? <span className="mr-2">• POS</span> : null}
                           {hasOpenOrder ? <span className="mr-2">• ORD</span> : null}

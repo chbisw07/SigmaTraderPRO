@@ -1,5 +1,6 @@
 import { type ComponentProps, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
@@ -7,17 +8,20 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { formatMoney, formatNumber, formatQty, formatStrikeHuman } from '@/lib/format'
 import { useAuthStore } from '@/store/authStore'
 import * as positionsApi from '@/lib/api/positions'
 import type * as ordersApi from '@/lib/api/orders'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 
+const EMPTY_POSITIONS: positionsApi.PositionOut[] = []
+
 function instrumentTitle(i: ordersApi.InstrumentOut | null): string {
   if (!i) return '—'
   const root = (i.underlying ?? i.symbol_root).toUpperCase()
   if (i.instrument_type === 'OPTION') {
-    return `${root} ${i.expiry ?? '—'} ${i.strike ?? '—'} ${i.option_type ?? ''}`.trim()
+    return `${root} ${i.expiry ?? '—'} ${formatStrikeHuman(i.strike, root)} ${i.option_type ?? ''}`.trim()
   }
   if (i.instrument_type === 'FUTURE') {
     return `${root} ${i.expiry ?? '—'} FUT`.trim()
@@ -32,6 +36,7 @@ export function PositionsPage() {
 
   const [q, setQ] = useState(() => searchParams.get('q') ?? '')
   const [broker, setBroker] = useState<ordersApi.BrokerKey | ''>('')
+  const [instrumentType, setInstrumentType] = useState<string>('')
 
   useEffect(() => {
     const next = searchParams.get('q') ?? ''
@@ -39,12 +44,13 @@ export function PositionsPage() {
   }, [searchParams])
 
   const positions = useQuery({
-    queryKey: ['positions', { q, broker }],
+    queryKey: ['positions', { q, broker, instrumentType }],
     queryFn: async () => {
       if (!accessToken) return { items: [] }
       return positionsApi.listPositions(accessToken, {
         q: q.trim() || undefined,
         broker: broker || undefined,
+        instrument_type: instrumentType || undefined,
         limit: 200,
       })
     },
@@ -52,7 +58,42 @@ export function PositionsPage() {
     refetchInterval: 30_000,
   })
 
-  const rows = positions.data?.items ?? []
+  const rows = positions.data?.items ?? EMPTY_POSITIONS
+
+  const pnlClass = (v: number | null) => {
+    if (v == null) return 'text-muted-foreground'
+    if (v > 0) return 'text-emerald-700 dark:text-emerald-300'
+    if (v < 0) return 'text-destructive'
+    return 'text-muted-foreground'
+  }
+
+  const totals = useMemo(() => {
+    let realized = 0
+    let unrealized = 0
+    let mtm = 0
+    let realizedOk = false
+    let unrealizedOk = false
+    let mtmOk = false
+    for (const r of rows) {
+      if (r.realized_pnl != null) {
+        realized += r.realized_pnl
+        realizedOk = true
+      }
+      if (r.unrealized_pnl != null) {
+        unrealized += r.unrealized_pnl
+        unrealizedOk = true
+      }
+      if (r.mtm != null) {
+        mtm += r.mtm
+        mtmOk = true
+      }
+    }
+    return {
+      realized: realizedOk ? realized : null,
+      unrealized: unrealizedOk ? unrealized : null,
+      mtm: mtmOk ? mtm : null,
+    }
+  }, [rows])
 
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
   const [stockLaunch, setStockLaunch] = useState<ComponentProps<typeof StockOrderDialog>['launch'] | null>(null)
@@ -60,6 +101,7 @@ export function PositionsPage() {
   const [fnoLaunch, setFnoLaunch] = useState<ComponentProps<typeof FnoOrderDialog>['launch'] | null>(null)
   const [dialogKey, setDialogKey] = useState<string>('manual')
   const [banner, setBanner] = useState<string | null>(null)
+  const [autoSyncDone, setAutoSyncDone] = useState(false)
 
   const closeDialogs = () => {
     setStockDialogOpen(false)
@@ -149,6 +191,35 @@ export function PositionsPage() {
     }
   }
 
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      if (!accessToken) throw new Error('Not authenticated')
+      // If the user has not filtered a broker, sync all configured brokers.
+      return positionsApi.syncPositions(accessToken, { broker: broker || undefined })
+    },
+    onSuccess: async (data) => {
+      setBanner(data.message)
+      await positions.refetch()
+    },
+    onError: () => {
+      setBanner('Broker sync failed')
+    },
+  })
+
+  useEffect(() => {
+    if (!accessToken) return
+    if (autoSyncDone) return
+    if (positions.isFetching) return
+    const rowsNow = positions.data?.items ?? []
+    if (rowsNow.length) {
+      setAutoSyncDone(true)
+      return
+    }
+    // Auto sync once when the page is empty (common on first run).
+    setAutoSyncDone(true)
+    void syncMutation.mutateAsync()
+  }, [accessToken, autoSyncDone, broker, positions.data, positions.isFetching, syncMutation])
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -157,8 +228,17 @@ export function PositionsPage() {
           <p className="text-sm text-muted-foreground">Local broker-neutral positions ledger (fill-level accuracy is reconciled later).</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void syncMutation.mutateAsync()}
+            disabled={syncMutation.isPending || !accessToken}
+          >
+            {syncMutation.isPending ? 'Syncing…' : 'Sync from broker'}
+          </Button>
           <Button type="button" variant="outline" size="sm" onClick={() => void positions.refetch()} disabled={positions.isFetching}>
-            {positions.isFetching ? 'Refreshing…' : 'Refresh'}
+            {positions.isFetching ? 'Refreshing…' : 'Refresh view'}
           </Button>
         </div>
       </div>
@@ -172,6 +252,33 @@ export function PositionsPage() {
           </div>
         </div>
       ) : null}
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Realized P&amp;L</CardTitle>
+          </CardHeader>
+          <CardContent className={cn('py-3 pt-0 text-lg font-semibold tabular-nums', pnlClass(totals.realized))}>
+            {formatMoney(totals.realized)}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Unrealized P&amp;L</CardTitle>
+          </CardHeader>
+          <CardContent className={cn('py-3 pt-0 text-lg font-semibold tabular-nums', pnlClass(totals.unrealized))}>
+            {formatMoney(totals.unrealized)}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">MTM</CardTitle>
+          </CardHeader>
+          <CardContent className={cn('py-3 pt-0 text-lg font-semibold tabular-nums', pnlClass(totals.mtm))}>
+            {formatMoney(totals.mtm)}
+          </CardContent>
+        </Card>
+      </div>
 
       <Card>
         <CardHeader>
@@ -192,7 +299,26 @@ export function PositionsPage() {
             <option value="angel">Angel One</option>
             <option value="zerodha">Zerodha</option>
           </select>
-          <Button type="button" variant="outline" size="sm" onClick={() => { setQ(''); setBroker('') }}>
+          <select
+            value={instrumentType}
+            onChange={(e) => setInstrumentType(e.target.value)}
+            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+          >
+            <option value="">All types</option>
+            <option value="EQUITY">Stock/ETF</option>
+            <option value="OPTION">Option</option>
+            <option value="FUTURE">Future</option>
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setQ('')
+              setBroker('')
+              setInstrumentType('')
+            }}
+          >
             Clear
           </Button>
         </CardContent>
@@ -216,8 +342,6 @@ export function PositionsPage() {
                 <th className="px-3 py-2 text-left">Realized</th>
                 <th className="px-3 py-2 text-left">Unrealized</th>
                 <th className="px-3 py-2 text-left">MTM</th>
-                <th className="px-3 py-2 text-left">SL</th>
-                <th className="px-3 py-2 text-left">TP</th>
                 <th className="px-3 py-2 text-left">Orders</th>
                 <th className="px-3 py-2 text-left">Source</th>
                 <th className="px-3 py-2 text-right">Actions</th>
@@ -240,14 +364,18 @@ export function PositionsPage() {
                     </td>
                     <td className="px-3 py-2">{p.broker}</td>
                     <td className={cn('px-3 py-2 font-medium', sideCls)}>{p.side}</td>
-                    <td className="px-3 py-2 tabular-nums">{p.lots != null ? `${p.lots} lots` : p.quantity}</td>
-                    <td className="px-3 py-2 tabular-nums">{p.avg_price ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{p.last_price ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{p.realized_pnl ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{p.unrealized_pnl ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{p.mtm ?? '—'}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">—</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">—</td>
+                    <td className="px-3 py-2 tabular-nums">
+                      {p.lots != null ? `${formatQty(p.lots)} lots` : formatQty(p.quantity)}
+                    </td>
+                    <td className="px-3 py-2 tabular-nums">{formatNumber(p.avg_price)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatNumber(p.last_price)}</td>
+                    <td className={cn('px-3 py-2 tabular-nums font-medium', pnlClass(p.realized_pnl))}>
+                      {formatMoney(p.realized_pnl)}
+                    </td>
+                    <td className={cn('px-3 py-2 tabular-nums font-medium', pnlClass(p.unrealized_pnl))}>
+                      {formatMoney(p.unrealized_pnl)}
+                    </td>
+                    <td className={cn('px-3 py-2 tabular-nums font-medium', pnlClass(p.mtm))}>{formatMoney(p.mtm)}</td>
                     <td className="px-3 py-2 tabular-nums">{p.linked_orders_count}</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{p.source}</td>
                     <td className="px-3 py-2 text-right">
@@ -264,20 +392,26 @@ export function PositionsPage() {
                         <Button type="button" size="sm" variant="outline" onClick={() => void onRefresh(p.id)} disabled={busy}>
                           Refresh
                         </Button>
-                        <Button type="button" size="sm" variant="outline" disabled>
-                          Add SL
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" disabled>
-                          Add TP
-                        </Button>
                       </div>
                     </td>
                   </tr>
                 )
               })}
-              {!rows.length && !positions.isFetching ? (
+              {positions.isError ? (
                 <tr>
-                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={14}>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={12}>
+                    Unable to load positions. Check API connectivity and try refresh.
+                  </td>
+                </tr>
+              ) : positions.isFetching && !rows.length ? (
+                <tr>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={12}>
+                    Loading positions…
+                  </td>
+                </tr>
+              ) : !rows.length && !positions.isFetching ? (
+                <tr>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={12}>
                     No positions yet.
                   </td>
                 </tr>

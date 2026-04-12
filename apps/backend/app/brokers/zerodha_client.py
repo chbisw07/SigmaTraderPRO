@@ -32,6 +32,10 @@ class ZerodhaQuoteError(RuntimeError):
     pass
 
 
+class ZerodhaHoldingsError(RuntimeError):
+    pass
+
+
 def get_login_url(*, api_key: str) -> str:
     kite = KiteConnect(api_key=api_key)
     return str(kite.login_url())
@@ -153,3 +157,17 @@ def fetch_quotes(*, api_key: str, access_token: str, instruments: list[str]) -> 
     if not isinstance(payload, dict):
         raise ZerodhaQuoteError("Zerodha quote payload must be a dict")
     return payload
+
+
+def fetch_holdings(*, api_key: str, access_token: str) -> list[dict]:
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(access_token)
+    try:
+        rows = kite.holdings()
+    except Exception as exc:  # noqa: BLE001 - external SDK best-effort
+        msg = str(exc).strip().replace("\n", " ")
+        msg = msg[:240] if msg else "unknown error"
+        raise ZerodhaHoldingsError(f"Zerodha holdings fetch failed ({msg})") from exc
+    if not isinstance(rows, list):
+        raise ZerodhaHoldingsError("Zerodha holdings payload must be a list")
+    return [row for row in rows if isinstance(row, dict)]

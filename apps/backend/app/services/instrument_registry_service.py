@@ -144,6 +144,7 @@ class InstrumentRegistryService:
                     func.lower(Instrument.symbol_root).like(like),
                     func.lower(func.coalesce(Instrument.underlying, "")).like(like),
                     func.lower(Instrument.canonical_id).like(like),
+                    func.lower(func.coalesce(Instrument.isin, "")).like(like),
                 )
             )
 

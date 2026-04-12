@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
+import { formatNumber, formatQty, formatStrikeHuman } from '@/lib/format'
 import { useAuthStore } from '@/store/authStore'
 import * as ordersApi from '@/lib/api/orders'
 import * as positionsApi from '@/lib/api/positions'
@@ -38,7 +39,7 @@ function instrumentTitle(i: ordersApi.InstrumentOut | null): string {
   if (!i) return '—'
   const root = (i.underlying ?? i.symbol_root).toUpperCase()
   if (i.instrument_type === 'OPTION') {
-    return `${root} ${i.expiry ?? '—'} ${i.strike ?? '—'} ${i.option_type ?? ''}`.trim()
+    return `${root} ${i.expiry ?? '—'} ${formatStrikeHuman(i.strike, root)} ${i.option_type ?? ''}`.trim()
   }
   if (i.instrument_type === 'FUTURE') {
     return `${root} ${i.expiry ?? '—'} FUT`.trim()
@@ -57,6 +58,7 @@ export function OrdersPage() {
   const [broker, setBroker] = useState<ordersApi.BrokerKey | ''>('')
   const [status, setStatus] = useState<string>('')
   const [instrumentType, setInstrumentType] = useState<string>('')
+  const [product, setProduct] = useState<string>('')
   const includeBrokerOrders = user?.include_broker_orders ?? true
   const [mode, setMode] = useState<ordersApi.OrdersSourceMode>(() => (includeBrokerOrders ? 'merged' : 'internal_only'))
 
@@ -65,7 +67,7 @@ export function OrdersPage() {
   }, [includeBrokerOrders, mode])
 
   const orders = useQuery<ordersApi.OrdersWorkspaceResponse>({
-    queryKey: ['orders', 'workspace', { q, broker, status, instrumentType, mode, includeBrokerOrders }],
+    queryKey: ['orders', 'workspace', { q, broker, status, instrumentType, product, mode, includeBrokerOrders }],
     queryFn: async () => {
       if (!accessToken) {
         return { items: [], meta: { include_broker_orders: includeBrokerOrders, mode, broker_errors: {} } }
@@ -75,6 +77,7 @@ export function OrdersPage() {
         q: q.trim() || undefined,
         broker: broker || undefined,
         status: status || undefined,
+        product: product || undefined,
         instrument_type: instrumentType || undefined,
         limit: 200,
       })
@@ -278,7 +281,12 @@ export function OrdersPage() {
               </Button>
             ))}
           </div>
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search symbol / canonical id…" className="w-72" />
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search symbol / canonical / broker id / correlation…"
+            className="w-80"
+          />
           <select
             value={broker}
             onChange={(e) => {
@@ -305,6 +313,18 @@ export function OrdersPage() {
             ))}
           </select>
           <select
+            value={product}
+            onChange={(e) => setProduct(e.target.value)}
+            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+          >
+            <option value="">All products</option>
+            {['CNC', 'MIS', 'NRML'].map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+          <select
             value={instrumentType}
             onChange={(e) => setInstrumentType(e.target.value)}
             className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
@@ -314,7 +334,18 @@ export function OrdersPage() {
             <option value="OPTION">Option</option>
             <option value="FUTURE">Future</option>
           </select>
-          <Button type="button" variant="outline" size="sm" onClick={() => { setQ(''); setBroker(''); setStatus(''); setInstrumentType('') }}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setQ('')
+              setBroker('')
+              setStatus('')
+              setProduct('')
+              setInstrumentType('')
+            }}
+          >
             Clear
           </Button>
         </CardContent>
@@ -343,6 +374,7 @@ export function OrdersPage() {
                 <th className="px-3 py-2 text-left">Avg</th>
                 <th className="px-3 py-2 text-left">Status</th>
                 <th className="px-3 py-2 text-left">Broker ID</th>
+                <th className="px-3 py-2 text-left">Correlation</th>
                 <th className="px-3 py-2 text-left">Source</th>
                 <th className="px-3 py-2 text-left">PnL</th>
                 <th className="px-3 py-2 text-right">Actions</th>
@@ -370,10 +402,10 @@ export function OrdersPage() {
                     <td className="px-3 py-2"><Badge variant="outline">{o.source_origin}</Badge></td>
                     <td className="px-3 py-2"><Badge variant="outline">{o.reconciliation_state}</Badge></td>
                     <td className="px-3 py-2">{o.product ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{o.lots != null ? `${o.lots} lots` : (o.quantity ?? '—')}</td>
+                    <td className="px-3 py-2 tabular-nums">{o.lots != null ? `${formatQty(o.lots)} lots` : formatQty(o.quantity)}</td>
                     <td className="px-3 py-2">{o.order_type ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{o.placed_price ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{o.avg_price ?? '—'}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatNumber(o.placed_price)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatNumber(o.avg_price)}</td>
                     <td className="px-3 py-2">
                       <StatusBadge status={o.status} />
                       {o.blocked_reason_message ? (
@@ -387,6 +419,9 @@ export function OrdersPage() {
                       ) : null}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{o.broker_order_id ?? '—'}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {o.correlation_id ? <span className="font-mono">{o.correlation_id}</span> : '—'}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="text-xs">{o.source ?? '—'}</div>
                       <div className="text-[11px] text-muted-foreground">{o.intent_type ?? '—'}</div>
@@ -438,9 +473,21 @@ export function OrdersPage() {
                   </tr>
                 )
               })}
-              {!rows.length && !orders.isFetching ? (
+              {orders.isError ? (
                 <tr>
-                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={16}>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={17}>
+                    Unable to load orders. Check API connectivity and try refresh.
+                  </td>
+                </tr>
+              ) : orders.isFetching && !rows.length ? (
+                <tr>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={17}>
+                    Loading orders…
+                  </td>
+                </tr>
+              ) : !rows.length && !orders.isFetching ? (
+                <tr>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={17}>
                     No orders yet. Place one from Search.
                   </td>
                 </tr>

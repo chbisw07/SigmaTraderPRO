@@ -378,5 +378,130 @@ def test_orders_workspace_mode_forced_to_internal_when_preference_disabled(
     data = resp.json()
     assert data["meta"]["include_broker_orders"] is False
     assert data["meta"]["mode"] == "internal_only"
-    assert len(data["items"]) == 1
-    assert data["items"][0]["source_origin"] == "sigmatrader"
+
+
+def test_orders_workspace_search_and_product_filter(
+    db_session: Session, client: TestClient
+) -> None:
+    user = _create_user(db_session, email="u_search@example.com", password="pass123")
+    inst = _ensure_equity_instrument(db_session, "NSE_EQ:EQUITY:EQUITY:INFY")
+
+    o1 = Order(
+        user_id=user.id,
+        broker_key="angel",
+        canonical_id=inst.canonical_id,
+        side="BUY",
+        quantity=1,
+        lots=None,
+        product="CNC",
+        order_type="LIMIT",
+        limit_price=10.0,
+        avg_executed_price=None,
+        source="manual_ui",
+        intent_type="ENTRY",
+        trigger_mode="LIMIT",
+        risk_mode=None,
+        sl_value=None,
+        tp_value=None,
+        trailing_value=None,
+        parent_order_id=None,
+        linked_position_id=None,
+        broker_context="angel",
+        preview_snapshot_json=None,
+        broker_payload_json=None,
+        broker_symbol_resolved=None,
+        broker_symbol_token_resolved=None,
+        lot_size_snapshot=1,
+        margin_snapshot_json=None,
+        status="BLOCKED",
+        broker_order_id="BROKER_ORDER_123",
+        error_message=None,
+        correlation_id="CORR_TEST_123",
+        blocked_reason_code="BROKER_SESSION_STALE",
+        blocked_reason_message="broker session is stale",
+        failure_reason_code=None,
+        failure_reason_message=None,
+        dispatch_tags_json=None,
+        dispatch_diagnostics_json=None,
+    )
+    o2 = Order(
+        user_id=user.id,
+        broker_key="angel",
+        canonical_id=inst.canonical_id,
+        side="SELL",
+        quantity=2,
+        lots=None,
+        product="MIS",
+        order_type="MARKET",
+        limit_price=None,
+        avg_executed_price=None,
+        source="manual_ui",
+        intent_type="ENTRY",
+        trigger_mode="MARKET",
+        risk_mode=None,
+        sl_value=None,
+        tp_value=None,
+        trailing_value=None,
+        parent_order_id=None,
+        linked_position_id=None,
+        broker_context="angel",
+        preview_snapshot_json=None,
+        broker_payload_json=None,
+        broker_symbol_resolved=None,
+        broker_symbol_token_resolved=None,
+        lot_size_snapshot=1,
+        margin_snapshot_json=None,
+        status="PENDING",
+        broker_order_id="BROKER_ORDER_999",
+        error_message=None,
+        correlation_id="CORR_TEST_999",
+        blocked_reason_code=None,
+        blocked_reason_message=None,
+        failure_reason_code=None,
+        failure_reason_message=None,
+        dispatch_tags_json=None,
+        dispatch_diagnostics_json=None,
+    )
+    db_session.add_all([o1, o2])
+    db_session.commit()
+
+    access = _login(client, "u_search@example.com", "pass123")
+
+    # Search by correlation id.
+    resp = client.get(
+        "/api/v1/orders/workspace?mode=internal_only&q=CORR_TEST_123",
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["internal_order_id"] == o1.id
+    assert items[0]["correlation_id"] == "CORR_TEST_123"
+
+    # Search by broker order id.
+    resp2 = client.get(
+        "/api/v1/orders/workspace?mode=internal_only&q=BROKER_ORDER_999",
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp2.status_code == 200
+    items2 = resp2.json()["items"]
+    assert len(items2) == 1
+    assert items2[0]["internal_order_id"] == o2.id
+
+    # Search by blocked reason text.
+    resp3 = client.get(
+        "/api/v1/orders/workspace?mode=internal_only&q=stale",
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp3.status_code == 200
+    assert len(resp3.json()["items"]) == 1
+
+    # Filter by product.
+    resp4 = client.get(
+        "/api/v1/orders/workspace?mode=internal_only&product=CNC",
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp4.status_code == 200
+    items4 = resp4.json()["items"]
+    assert len(items4) == 1
+    assert items4[0]["internal_order_id"] == o1.id

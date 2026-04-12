@@ -21,6 +21,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useOrderPrefsStore } from '@/store/orderPrefsStore'
 import { useQuoteStore } from '@/store/quoteStore'
 import { computeAtmStrike, computeMoneyness, moneynessBadgeClasses } from '@/lib/moneyness'
+import { formatStrikeHuman } from '@/lib/format'
 
 type Props = {
   open: boolean
@@ -48,15 +49,6 @@ type Props = {
           intent?: ordersApi.OrderIntentMetadata
         }
       }
-}
-
-function formatStrike(strike: number | null): string {
-  if (strike === null) return '—'
-  if (strike >= 100_000) {
-    const v = strike / 100
-    return Number.isInteger(v) ? String(v) : v.toFixed(2)
-  }
-  return String(strike)
 }
 
 const EMPTY_STRIKES: number[] = []
@@ -426,7 +418,10 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
                   {instrumentType === 'OPTION' ? (
                     <>
                       {' • '}
-                      Strike: <span className="font-medium tabular-nums">{formatStrike(strike)}</span>
+                      Strike:{' '}
+                      <span className="font-medium tabular-nums">
+                        {formatStrikeHuman(strike, underlying)}
+                      </span>
                       {' • '}
                       <span className="font-medium">{optionType}</span>
                     </>
@@ -635,7 +630,7 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
                       const m = computeMoneyness(s, { optionType, spot, atmStrike })
                       return (
                         <option key={s} value={s}>
-                          {formatStrike(s)} • {m}
+                          {formatStrikeHuman(s, underlying)} • {m}
                         </option>
                       )
                     })}

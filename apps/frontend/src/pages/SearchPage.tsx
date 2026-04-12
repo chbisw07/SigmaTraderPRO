@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useQuoteStore } from '@/store/quoteStore'
 import { computeAtmStrike, computeMoneyness, moneynessBadgeClasses } from '@/lib/moneyness'
+import { formatStrikeHuman } from '@/lib/format'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 
@@ -48,16 +49,9 @@ function TypeBadge({
 }
 
 function formatDerivativeSuffix(i: instrumentsApi.InstrumentOut) {
-  const formatStrike = (strike: number) => {
-    if (strike >= 100_000) {
-      const v = strike / 100
-      return Number.isInteger(v) ? String(v) : v.toFixed(2)
-    }
-    return String(strike)
-  }
   const bits: string[] = []
   if (i.expiry) bits.push(i.expiry)
-  if (i.strike != null) bits.push(formatStrike(i.strike))
+  if (i.strike != null) bits.push(formatStrikeHuman(i.strike, i.underlying ?? i.symbol_root))
   if (i.option_type) bits.push(i.option_type)
   return bits.length ? bits.join(' • ') : null
 }
@@ -78,20 +72,11 @@ function formatExpiryHuman(iso: string | null): string {
   }
 }
 
-function formatStrikeHuman(strike: number | null): string {
-  if (strike == null) return '—'
-  if (strike >= 100_000) {
-    const v = strike / 100
-    return Number.isInteger(v) ? String(v) : v.toFixed(2)
-  }
-  return String(strike)
-}
-
 function formatInstrumentTitle(i: instrumentsApi.InstrumentOut): string {
   const root = (i.underlying ?? i.symbol_root).toUpperCase()
 
   if (i.instrument_type === 'OPTION') {
-    return `${root} ${formatExpiryHuman(i.expiry)} ${formatStrikeHuman(i.strike)} ${i.option_type ?? ''}`.trim()
+    return `${root} ${formatExpiryHuman(i.expiry)} ${formatStrikeHuman(i.strike, root)} ${i.option_type ?? ''}`.trim()
   }
   if (i.instrument_type === 'FUTURE') {
     return `${root} ${formatExpiryHuman(i.expiry)} FUT`.trim()
@@ -285,7 +270,7 @@ export function SearchPage() {
   })
 
   const chainItems = optionChain.data?.items ?? EMPTY_INSTRUMENTS
-  const formatStrikeDisplay = formatStrikeHuman
+  const formatStrikeDisplay = (strike: number | null | undefined) => formatStrikeHuman(strike, underlying ?? null)
   const chainSpot = useMemo(() => (underlying ? getSpot(underlying) : null), [getSpot, underlying])
   const chainAtmStrike = useMemo(() => {
     const strikes = chainItems

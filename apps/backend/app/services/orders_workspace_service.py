@@ -132,6 +132,7 @@ class OrdersWorkspaceService:
         user: User,
         broker: str | None,
         status_filter: str | None,
+        product_filter: str | None,
         instrument_type: str | None,
         q: str | None,
         limit: int,
@@ -145,12 +146,19 @@ class OrdersWorkspaceService:
             qry = qry.filter(Order.broker_key == broker)
         if status_filter:
             qry = qry.filter(Order.status.ilike(status_filter))
+        if product_filter:
+            qry = qry.filter(Order.product.ilike(product_filter))
         if instrument_type:
             qry = qry.filter(Instrument.instrument_type == instrument_type)
         if q:
             like = f"%{q.strip().upper()}%"
             qry = qry.filter(
                 (Order.canonical_id.ilike(like))
+                | (Order.broker_order_id.ilike(like))
+                | (Order.correlation_id.ilike(like))
+                | (Order.blocked_reason_message.ilike(like))
+                | (Order.failure_reason_message.ilike(like))
+                | (Order.error_message.ilike(like))
                 | (Instrument.display_symbol.ilike(like))
                 | (Instrument.symbol_root.ilike(like))
                 | (Instrument.underlying.ilike(like))
@@ -253,6 +261,7 @@ class OrdersWorkspaceService:
         mode: OrdersSourceMode,
         broker: str | None = None,
         status_filter: str | None = None,
+        product_filter: str | None = None,
         instrument_type: str | None = None,
         q: str | None = None,
         limit: int = 200,
@@ -271,6 +280,7 @@ class OrdersWorkspaceService:
                 user=user,
                 broker=broker,
                 status_filter=status_filter,
+                product_filter=product_filter,
                 instrument_type=instrument_type,
                 q=q,
                 limit=limit,
@@ -511,6 +521,32 @@ class OrdersWorkspaceService:
             items = [
                 i for i in items if i.source_origin != OrdersSourceOrigin.sigmatrader
             ]
+
+        if q:
+            needle = q.strip().upper()
+
+            def _hit(row: OrdersWorkspaceRow) -> bool:
+                if not needle:
+                    return True
+                for value in [
+                    row.canonical_id,
+                    row.symbol_display,
+                    row.broker_order_id,
+                    row.exchange_order_id,
+                    row.correlation_id,
+                    row.rejection_reason,
+                    row.blocked_reason_message,
+                    row.failure_reason_message,
+                ]:
+                    if value and needle in str(value).upper():
+                        return True
+                return False
+
+            items = [i for i in items if _hit(i)]
+
+        if product_filter:
+            want = product_filter.strip().upper()
+            items = [i for i in items if (i.product and i.product.value == want)]
 
         # Sort: placed_at desc, fallback now.
         items.sort(key=lambda r: r.placed_at or _now_utc(), reverse=True)

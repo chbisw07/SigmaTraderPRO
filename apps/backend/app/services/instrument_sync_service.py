@@ -201,5 +201,61 @@ class InstrumentSyncService:
 
         return self.sync_zerodha_rows(db, selected)
 
+    def sync_zerodha_tokens(
+        self,
+        db: Session,
+        *,
+        api_key: str,
+        access_token: str | None = None,
+        instrument_tokens: list[str],
+        max_rows: int | None = None,
+    ) -> SyncResult:
+        """
+        Targeted Zerodha NFO sync for a specific set of instrument tokens.
+
+        Used for on-demand mapping when a position exists but the instrument is
+        not yet present in the local registry.
+        """
+        from kiteconnect import KiteConnect  # local import to keep core slim
+
+        wanted = {
+            str(t).strip()
+            for t in instrument_tokens
+            if isinstance(t, str) and str(t).strip()
+        }
+        if not wanted:
+            raise ValueError("instrument_tokens is required for zerodha token sync")
+
+        kite = KiteConnect(api_key=api_key)
+        if access_token:
+            kite.set_access_token(access_token)
+        try:
+            rows = kite.instruments("NFO")
+        except Exception as exc:  # noqa: BLE001 - external SDK best-effort
+            msg = str(exc).strip().replace("\n", " ")
+            msg = msg[:240] if msg else "unknown error"
+            raise ValueError(
+                "Zerodha instruments fetch failed. "
+                "Reconnect Zerodha and retry. "
+                f"({msg})"
+            ) from exc
+        if not isinstance(rows, list):
+            raise ValueError("Zerodha instruments payload must be a list")
+
+        selected: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            token = row.get("instrument_token")
+            if token is None:
+                continue
+            if str(token) not in wanted:
+                continue
+            selected.append(row)
+            if max_rows and len(selected) >= max_rows:
+                break
+
+        return self.sync_zerodha_rows(db, selected)
+
 
 instrument_sync_service = InstrumentSyncService()

@@ -4,6 +4,7 @@ import { Navigate, createBrowserRouter, createMemoryRouter } from 'react-router-
 import { BrokersPage } from '@/pages/BrokersPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { HoldingsPage } from '@/pages/HoldingsPage'
 import { OrdersPage } from '@/pages/OrdersPage'
 import { PositionsPage } from '@/pages/PositionsPage'
 import { SearchPage } from '@/pages/SearchPage'
@@ -30,6 +31,7 @@ export const routeConfig: RouteObject[] = [
           { path: 'search', element: <SearchPage /> },
           { path: 'strategies', element: <StrategiesPage /> },
           { path: 'positions', element: <PositionsPage /> },
+          { path: 'holdings', element: <HoldingsPage /> },
           { path: 'orders', element: <OrdersPage /> },
           { path: 'brokers', element: <BrokersPage /> },
           { path: 'system-events', element: <SystemEventsPage /> },

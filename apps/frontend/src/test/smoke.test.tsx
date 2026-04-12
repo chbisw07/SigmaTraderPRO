@@ -107,6 +107,104 @@ test('system events page renders', async () => {
   expect(await screen.findByText(/Order dispatch blocked/i)).toBeInTheDocument()
 })
 
+test('holdings page renders', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: 'zerodha',
+      include_broker_orders: true,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/holdings')
+  expect(await screen.findByRole('heading', { name: 'Holdings' })).toBeInTheDocument()
+  expect(await screen.findByText('INFY')).toBeInTheDocument()
+})
+
+test('holdings row buy/sell actions open prefilled stock ticket', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: 'zerodha',
+      include_broker_orders: true,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/holdings')
+  expect(await screen.findByRole('heading', { name: 'Holdings' })).toBeInTheDocument()
+
+  const table = await screen.findByRole('table')
+  const infyCell = within(table).getByText('INFY')
+  const row = infyCell.closest('tr')
+  if (!row) throw new Error('Holding row not found')
+
+  const sellBtn = within(row).getByRole('button', { name: 'Sell' })
+  fireEvent.click(sellBtn)
+
+  expect(await screen.findByText('Stock order')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Place sell' })).toBeInTheDocument()
+  expect(screen.getByLabelText('Order broker')).toHaveValue('zerodha')
+  expect(screen.getByLabelText('Order product')).toHaveValue('CNC')
+  expect(screen.getByLabelText('Order quantity')).toHaveValue(10)
+
+  const dialog = screen.getByRole('dialog')
+  fireEvent.click(within(dialog).getByText('Close'))
+
+  const buyBtn = within(row).getByRole('button', { name: 'Buy' })
+  fireEvent.click(buyBtn)
+
+  expect(await screen.findByText('Stock order')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Place buy' })).toBeInTheDocument()
+  expect(screen.getByLabelText('Order broker')).toHaveValue('zerodha')
+  expect(screen.getByLabelText('Order product')).toHaveValue('CNC')
+  expect(screen.getByLabelText('Order quantity')).toHaveValue(1)
+})
+
+test('orders page surfaces blocked/failed/ack statuses', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: 'angel',
+      include_broker_orders: true,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/orders')
+
+  expect(await screen.findByRole('heading', { name: 'Orders' })).toBeInTheDocument()
+  const table = await screen.findByRole('table')
+  const t = within(table)
+  expect(t.getByText('BLOCKED')).toBeInTheDocument()
+  expect(t.getByText('DISPATCH_FAILED')).toBeInTheDocument()
+  expect(t.getByText('ACKNOWLEDGED')).toBeInTheDocument()
+  expect(t.getByText(/Broker session is stale/i)).toBeInTheDocument()
+  expect(t.getByText(/Order dispatch failed before broker acknowledgement/i)).toBeInTheDocument()
+})
+
 test('logout clears auth state and redirects to login', async () => {
   useAuthStore.setState({
     status: 'authenticated',
@@ -519,7 +617,8 @@ test('orders page renders and repeat opens prefilled ticket', async () => {
   renderAt('/orders')
   expect(await screen.findByRole('heading', { name: 'Orders' })).toBeInTheDocument()
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Repeat' }))
+  const repeatButtons = await screen.findAllByRole('button', { name: 'Repeat' })
+  fireEvent.click(repeatButtons[0])
   expect(await screen.findByText('Stock order')).toBeInTheDocument()
 })
 

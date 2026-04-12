@@ -27,13 +27,22 @@ export type PositionOut = {
 }
 
 export type PositionListResponse = { items: PositionOut[] }
+export type PositionsSyncResponse = {
+  status: 'ok'
+  message: string
+  synced: number
+  closed: number
+  skipped_unmapped: number
+  broker_errors: Record<string, string>
+}
 
 export async function listPositions(
   accessToken: string,
-  params: { broker?: BrokerKey; q?: string; limit?: number } = {},
+  params: { broker?: BrokerKey; instrument_type?: string; q?: string; limit?: number } = {},
 ): Promise<PositionListResponse> {
   const query = new URLSearchParams()
   if (params.broker) query.set('broker', params.broker)
+  if (params.instrument_type) query.set('instrument_type', params.instrument_type)
   if (params.q) query.set('q', params.q)
   if (params.limit) query.set('limit', String(params.limit))
 
@@ -59,6 +68,19 @@ export async function reverseDraft(accessToken: string, positionId: number) {
 
 export async function refreshPosition(accessToken: string, positionId: number) {
   return apiRequest<{ status: string; message: string }>(`/api/v1/positions/${positionId}/refresh`, {
+    method: 'POST',
+    accessToken,
+  })
+}
+
+export async function syncPositions(
+  accessToken: string,
+  params: { broker?: BrokerKey } = {},
+): Promise<PositionsSyncResponse> {
+  const query = new URLSearchParams()
+  if (params.broker) query.set('broker', params.broker)
+  const qs = query.toString()
+  return apiRequest<PositionsSyncResponse>(`/api/v1/positions/sync${qs ? `?${qs}` : ''}`, {
     method: 'POST',
     accessToken,
   })

@@ -166,6 +166,16 @@ def test_sync_idempotent_and_search_api(
     assert len(items) == 1
     assert items[0]["canonical_id"].startswith("NSE_EQ:EQUITY:EQUITY:INFY")
 
+    isin_search = client.get(
+        "/api/v1/instruments/search",
+        params={"q": "INE009A01021"},
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert isin_search.status_code == 200
+    isin_items = isin_search.json()["items"]
+    assert len(isin_items) == 1
+    assert isin_items[0]["canonical_id"].startswith("NSE_EQ:EQUITY:EQUITY:INFY")
+
     detail = client.get(
         f"/api/v1/instruments/{items[0]['canonical_id']}",
         headers={"Authorization": f"Bearer {access}"},
@@ -265,3 +275,25 @@ def test_normalize_zerodha_raw_is_jsonable() -> None:
     assert normalized.raw is not None
     # Should not raise for non-JSON-native values like `date`.
     json.dumps(normalized.raw)
+
+
+def test_zerodha_option_display_symbol_uses_human_strike() -> None:
+    inst = normalize_zerodha_instrument(
+        {
+            "exchange": "NFO",
+            "instrument_token": 123,
+            "tradingsymbol": "NIFTY26APR24050CE",
+            "name": "NIFTY",
+            "instrument_type": "CE",
+            "expiry": "2026-04-25",
+            "strike": 24050,
+            "lot_size": 50,
+            "tick_size": 0.05,
+        }
+    )
+    assert inst is not None
+    # Internal strike is stored x100 for canonical stability.
+    assert inst.strike == 2405000.0
+    # Display symbol must match broker (no extra zeros).
+    assert "24050" in inst.display_symbol
+    assert "2405000" not in inst.display_symbol
