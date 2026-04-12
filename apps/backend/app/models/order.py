@@ -63,6 +63,7 @@ class Order(Base):
     # Snapshots and internal resolution (safe for persistence; no secrets).
     preview_snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     broker_payload_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    execution_intent_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     broker_symbol_resolved: Mapped[str | None] = mapped_column(
         String(128), nullable=True
     )

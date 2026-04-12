@@ -245,6 +245,10 @@ def test_stock_order_create_places_order_with_mocked_broker(
     assert created.correlation_id == data["correlation_id"]
     assert created.blocked_reason_code is None
     assert created.failure_reason_code is None
+    assert created.execution_intent_json is not None
+    entry = created.execution_intent_json.get("entry", {})
+    assert entry.get("canonical_id") == inst.canonical_id
+    assert entry.get("broker") == "angel"
 
 
 def test_stock_order_create_blocks_when_broker_session_missing(

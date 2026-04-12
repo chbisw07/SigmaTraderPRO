@@ -24,6 +24,7 @@ from app.orders.types import (
     OrderType,
     RiskMode,
 )
+from app.schemas.execution_intent import ExecutionIntent
 from app.schemas.instrument import InstrumentOut
 from app.schemas.order import (
     FnoOrderCreateRequest,
@@ -134,6 +135,11 @@ def preview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> StockOrderPreviewResponse:
+    execution_intent_json = (
+        payload.execution_intent.model_dump(mode="json")
+        if payload.execution_intent is not None
+        else None
+    )
     try:
         out = order_service.preview_stock_order(
             db,
@@ -154,6 +160,7 @@ def preview(
             parent_order_id=payload.parent_order_id,
             linked_position_id=payload.linked_position_id,
             broker_context=payload.broker_context,
+            execution_intent_json=execution_intent_json,
         )
     except OrderValidationError as exc:
         raise HTTPException(
@@ -219,6 +226,11 @@ def create(
     current_user: User = Depends(get_current_user),
 ) -> StockOrderCreateResponse:
     correlation_id = payload.correlation_id or str(uuid4())
+    execution_intent_json = (
+        payload.execution_intent.model_dump(mode="json")
+        if payload.execution_intent is not None
+        else None
+    )
     log_event(
         logger,
         "order_submission_started",
@@ -252,6 +264,7 @@ def create(
             parent_order_id=payload.parent_order_id,
             linked_position_id=payload.linked_position_id,
             broker_context=payload.broker_context,
+            execution_intent_json=execution_intent_json,
         )
     except OrderValidationError as exc:
         raise HTTPException(
@@ -440,11 +453,21 @@ def preview_fno(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FnoOrderPreviewResponse:
+    execution_intent_json = (
+        payload.execution_intent.model_dump(mode="json")
+        if payload.execution_intent is not None
+        else None
+    )
     try:
         out = order_service.preview_fno_order(
             db,
             user=current_user,
             broker=payload.broker,
+            canonical_id=(
+                payload.execution_intent.entry.canonical_id
+                if payload.execution_intent is not None
+                else None
+            ),
             instrument_type=payload.instrument_type,
             underlying=payload.underlying,
             expiry=payload.expiry,
@@ -464,6 +487,7 @@ def preview_fno(
             parent_order_id=payload.parent_order_id,
             linked_position_id=payload.linked_position_id,
             broker_context=payload.broker_context,
+            execution_intent_json=execution_intent_json,
         )
     except OrderValidationError as exc:
         raise HTTPException(
@@ -531,6 +555,11 @@ def create_fno(
     current_user: User = Depends(get_current_user),
 ) -> FnoOrderCreateResponse:
     correlation_id = payload.correlation_id or str(uuid4())
+    execution_intent_json = (
+        payload.execution_intent.model_dump(mode="json")
+        if payload.execution_intent is not None
+        else None
+    )
     log_event(
         logger,
         "order_submission_started",
@@ -538,7 +567,11 @@ def create_fno(
         event_type="create",
         user_id=current_user.id,
         broker=payload.broker.value,
-        instrument_key=str(payload.underlying),
+        instrument_key=(
+            payload.execution_intent.entry.canonical_id
+            if payload.execution_intent is not None
+            else str(payload.underlying)
+        ),
         action="create_fno",
         correlation_id=correlation_id,
         status="started",
@@ -549,6 +582,11 @@ def create_fno(
             db,
             user=current_user,
             broker=payload.broker,
+            canonical_id=(
+                payload.execution_intent.entry.canonical_id
+                if payload.execution_intent is not None
+                else None
+            ),
             instrument_type=payload.instrument_type,
             underlying=payload.underlying,
             expiry=payload.expiry,
@@ -568,6 +606,7 @@ def create_fno(
             parent_order_id=payload.parent_order_id,
             linked_position_id=payload.linked_position_id,
             broker_context=payload.broker_context,
+            execution_intent_json=execution_intent_json,
         )
     except OrderValidationError as exc:
         raise HTTPException(
@@ -836,6 +875,7 @@ def get_order(
         order=_order_out(order, inst),
         preview_snapshot_json=order.preview_snapshot_json,
         broker_payload_json=order.broker_payload_json,
+        execution_intent_json=getattr(order, "execution_intent_json", None),
     )
 
 
@@ -857,6 +897,13 @@ def repeat_order(
     order, inst = row
     if not inst:
         raise HTTPException(status_code=400, detail="Instrument not found for order")
+
+    intent = None
+    if getattr(order, "execution_intent_json", None):
+        try:
+            intent = ExecutionIntent.model_validate(order.execution_intent_json)
+        except Exception:  # noqa: BLE001
+            intent = None
 
     draft = OrderDraft(
         instrument=InstrumentOut.model_validate(inst, from_attributes=True),
@@ -892,6 +939,7 @@ def repeat_order(
             "linked_position_id": order.linked_position_id,
             "broker_context": order.broker_context,
         },
+        execution_intent=intent,
     )
     return OrderDraftResponse(draft=draft)
 

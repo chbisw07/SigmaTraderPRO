@@ -16,6 +16,7 @@ from app.orders.types import (
     OrderType,
     RiskMode,
 )
+from app.schemas.execution_intent import ExecutionIntent
 from app.schemas.instrument import InstrumentOut
 
 
@@ -43,12 +44,13 @@ class StockOrderBase(BaseModel):
 
 
 class StockOrderPreviewRequest(StockOrderBase, OrderIntentMetadata):
-    pass
+    execution_intent: ExecutionIntent | None = None
 
 
 class StockOrderCreateRequest(StockOrderBase, OrderIntentMetadata):
     correlation_id: str | None = None
     dispatch_tags: dict[str, str] | None = None
+    execution_intent: ExecutionIntent | None = None
 
 
 class BrokerRouting(BaseModel):
@@ -95,12 +97,13 @@ class FnoOrderBase(BaseModel):
 
 
 class FnoOrderPreviewRequest(FnoOrderBase, OrderIntentMetadata):
-    pass
+    execution_intent: ExecutionIntent | None = None
 
 
 class FnoOrderCreateRequest(FnoOrderBase, OrderIntentMetadata):
     correlation_id: str | None = None
     dispatch_tags: dict[str, str] | None = None
+    execution_intent: ExecutionIntent | None = None
 
 
 class FnoOrderPreviewResponse(BaseModel):
@@ -168,6 +171,7 @@ class OrderDetailResponse(BaseModel):
     order: OrderOut
     preview_snapshot_json: dict | None = None
     broker_payload_json: dict | None = None
+    execution_intent_json: dict | None = None
 
 
 class OrderDraft(BaseModel):
@@ -182,6 +186,7 @@ class OrderDraft(BaseModel):
     limit_price: float | None = None
     reference_price: float | None = None
     intent: OrderIntentMetadata
+    execution_intent: ExecutionIntent | None = None
 
 
 class OrderDraftResponse(BaseModel):

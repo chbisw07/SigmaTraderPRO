@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 
 import { Badge } from '@/components/ui/badge'
@@ -22,6 +22,15 @@ import { useOrderPrefsStore } from '@/store/orderPrefsStore'
 import { useQuoteStore } from '@/store/quoteStore'
 import { computeAtmStrike, computeMoneyness, moneynessBadgeClasses } from '@/lib/moneyness'
 import { formatStrikeHuman } from '@/lib/format'
+import {
+  deriveReferencePrice,
+  parseNumber,
+  priceFromSignedPct,
+  productForFnoMode,
+  productModeForProduct,
+  roundTo,
+  signedPctFromPrice,
+} from '@/lib/executionIntent'
 
 type Props = {
   open: boolean
@@ -46,6 +55,7 @@ type Props = {
           product?: 'MIS' | 'NRML'
           order_type?: ordersApi.OrderType
           limit_price?: number | null
+          execution_intent?: ordersApi.ExecutionIntent | null
           intent?: ordersApi.OrderIntentMetadata
         }
       }
@@ -66,6 +76,9 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
   const instrument = launch.mode === 'contract' ? launch.instrument : null
   const contractPrefill = launch.mode === 'contract' ? (launch.prefill ?? null) : null
   const manualPrefill = launch.mode === 'manual' ? (launch.prefill ?? null) : null
+  const prefillIntent = contractPrefill?.execution_intent ?? null
+  const prefillEntry = prefillIntent?.entry ?? null
+  const prefillPlan = prefillIntent?.plan ?? null
 
   const getPremium = useQuoteStore((s) => s.getPremium)
   const setPremium = useQuoteStore((s) => s.setPremium)
@@ -110,15 +123,40 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
   const [optionType, setOptionType] = useState<'CE' | 'PE'>(initialOptionType)
   const [strike, setStrike] = useState<number | null>(initialStrike)
 
-  const [side, setSide] = useState<ordersApi.OrderSide>(contractPrefill?.side ?? manualPrefill?.side ?? 'BUY')
-  const [lots, setLots] = useState(contractPrefill?.lots ?? 1)
-  const [product, setProduct] = useState<'MIS' | 'NRML'>(contractPrefill?.product ?? fnoProductPref)
-  const [orderType, setOrderType] = useState<ordersApi.OrderType>(contractPrefill?.order_type ?? fnoOrderTypePref)
+  const initialSide: ordersApi.OrderSide = prefillEntry?.side ?? contractPrefill?.side ?? manualPrefill?.side ?? 'BUY'
+  const initialLots = prefillEntry?.lots ?? contractPrefill?.lots ?? 1
+  const initialProduct: 'MIS' | 'NRML' =
+    (prefillEntry?.product as 'MIS' | 'NRML' | undefined) ??
+    contractPrefill?.product ??
+    fnoProductPref
+  const initialOrderType: ordersApi.OrderType =
+    prefillEntry?.order_type ?? contractPrefill?.order_type ?? fnoOrderTypePref
+  const initialProductMode: ordersApi.ProductMode =
+    prefillEntry?.product_mode ?? productModeForProduct(initialProduct)
+
+  const [side, setSide] = useState<ordersApi.OrderSide>(initialSide)
+  const [lots, setLots] = useState(initialLots)
+  const [productMode, setProductMode] = useState<ordersApi.ProductMode>(initialProductMode)
+  const [orderType, setOrderType] = useState<ordersApi.OrderType>(initialOrderType)
   const [limitPrice, setLimitPrice] = useState<number | null>(
-    (contractPrefill?.order_type ?? fnoOrderTypePref) === 'LIMIT'
-      ? (contractPrefill?.limit_price ?? initialPremium)
+    initialOrderType === 'LIMIT'
+      ? (prefillEntry?.limit_price ?? contractPrefill?.limit_price ?? initialPremium)
       : null,
   )
+
+  const product = useMemo<'MIS' | 'NRML'>(() => productForFnoMode(productMode), [productMode])
+
+  const [managedExits, setManagedExits] = useState<boolean>(Boolean(prefillPlan?.managed_exits ?? false))
+  const [slPrice, setSlPrice] = useState<number | null>(prefillPlan?.stop_loss?.price ?? null)
+  const [slPct, setSlPct] = useState<number | null>(prefillPlan?.stop_loss?.pct ?? null)
+  const [slBasis, setSlBasis] = useState<'price' | 'pct' | null>(prefillPlan?.stop_loss?.price != null ? 'price' : prefillPlan?.stop_loss?.pct != null ? 'pct' : null)
+  const [tpPrice, setTpPrice] = useState<number | null>(prefillPlan?.target?.price ?? null)
+  const [tpPct, setTpPct] = useState<number | null>(prefillPlan?.target?.pct ?? null)
+  const [tpBasis, setTpBasis] = useState<'price' | 'pct' | null>(prefillPlan?.target?.price != null ? 'price' : prefillPlan?.target?.pct != null ? 'pct' : null)
+  const [trailEnabled, setTrailEnabled] = useState<boolean>(Boolean(prefillPlan?.trailing_sl?.enabled ?? false))
+  const [trailPrice, setTrailPrice] = useState<number | null>(prefillPlan?.trailing_sl?.distance?.price ?? null)
+  const [trailPct, setTrailPct] = useState<number | null>(prefillPlan?.trailing_sl?.distance?.pct ?? null)
+  const [trailBasis, setTrailBasis] = useState<'price' | 'pct' | null>(prefillPlan?.trailing_sl?.distance?.price != null ? 'price' : prefillPlan?.trailing_sl?.distance?.pct != null ? 'pct' : null)
 
   const [message, setMessage] = useState<
     | {
@@ -275,6 +313,53 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
       // If we have a cached reference premium, treat it as a safe default for LIMIT
       // so preview/create uses the same number the UI is showing.
       limit_price: orderType === 'LIMIT' ? (limitPrice ?? hydratedPremium) : null,
+      execution_intent: (() => {
+        const canonicalId =
+          preview?.instrument?.canonical_id ??
+          (launch.mode === 'contract' && instrument && contractMatchesSelection ? instrument.canonical_id : null) ??
+          selectionCanonicalId ??
+          null
+        const lotSize =
+          preview?.instrument?.lot_size ??
+          (launch.mode === 'contract' && instrument && contractMatchesSelection ? instrument.lot_size ?? null : null)
+        const qty = derivedQuantity ?? (lotSize && lots ? lotSize * lots : null)
+        if (!canonicalId || qty == null) return null
+        const ref = deriveReferencePrice(
+          orderType,
+          orderType === 'LIMIT' ? (limitPrice ?? hydratedPremium) : null,
+          hydratedPremium,
+        )
+        return {
+          version: '1',
+          entry: {
+            broker,
+            canonical_id: canonicalId,
+            side,
+            product_mode: productMode,
+            product,
+            order_type: orderType,
+            limit_price: orderType === 'LIMIT' ? (limitPrice ?? hydratedPremium) : null,
+            quantity: qty,
+            lots,
+            lot_size: lotSize ?? null,
+          },
+          plan: {
+            managed_exits: managedExits,
+            reference_price: ref.price,
+            reference_source: ref.source,
+            stop_loss: { price: managedExits ? slPrice : null, pct: managedExits ? slPct : null },
+            target: { price: managedExits ? tpPrice : null, pct: managedExits ? tpPct : null },
+            trailing_sl: {
+              enabled: managedExits ? trailEnabled : false,
+              distance: {
+                price: managedExits && trailEnabled ? trailPrice : null,
+                pct: managedExits && trailEnabled ? trailPct : null,
+              },
+            },
+          },
+          source_context: launch.mode === 'contract' ? 'contract' : 'manual',
+        } satisfies ordersApi.ExecutionIntent
+      })(),
       source: contractPrefill?.intent?.source ?? 'manual_ui',
       intent_type: contractPrefill?.intent?.intent_type ?? 'ENTRY',
       trigger_mode: contractPrefill?.intent?.trigger_mode ?? null,
@@ -296,12 +381,89 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
       side,
       lots,
       product,
+      productMode,
       orderType,
       limitPrice,
       hydratedPremium,
+      preview?.instrument?.canonical_id,
+      preview?.instrument?.lot_size,
+      derivedQuantity,
+      contractMatchesSelection,
+      instrument,
+      selectionCanonicalId,
+      managedExits,
+      slPrice,
+      slPct,
+      tpPrice,
+      tpPct,
+      trailEnabled,
+      trailPrice,
+      trailPct,
       contractPrefill?.intent,
+      launch.mode,
     ],
   )
+
+  const reference = useMemo(
+    () =>
+      deriveReferencePrice(
+        orderType,
+        orderType === 'LIMIT' ? (limitPrice ?? hydratedPremium) : null,
+        hydratedPremium,
+      ),
+    [hydratedPremium, limitPrice, orderType],
+  )
+
+  useEffect(() => {
+    if (!managedExits) return
+    if (reference.price == null) return
+    if (slBasis === 'price' && slPrice != null) setSlPct(roundTo(signedPctFromPrice(side, reference.price, slPrice), 2))
+    if (slBasis === 'pct' && slPct != null) setSlPrice(roundTo(priceFromSignedPct(side, reference.price, slPct), 2))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [managedExits, reference.price, side])
+
+  useEffect(() => {
+    if (!managedExits) return
+    if (reference.price == null) return
+    if (tpBasis === 'price' && tpPrice != null) setTpPct(roundTo(signedPctFromPrice(side, reference.price, tpPrice), 2))
+    if (tpBasis === 'pct' && tpPct != null) setTpPrice(roundTo(priceFromSignedPct(side, reference.price, tpPct), 2))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [managedExits, reference.price, side])
+
+  useEffect(() => {
+    if (!managedExits || !trailEnabled) return
+    if (reference.price == null) return
+    const ref = reference.price
+    if (trailBasis === 'price' && trailPrice != null) {
+      const pct = -Math.abs(trailPrice / ref) * 100
+      setTrailPct(roundTo(pct, 2))
+    }
+    if (trailBasis === 'pct' && trailPct != null) {
+      const dist = (Math.abs(trailPct) / 100) * ref
+      setTrailPrice(roundTo(dist, 2))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [managedExits, trailEnabled, reference.price, side])
+
+  const planErrors = useMemo(() => {
+    if (!managedExits) return []
+    const errs: string[] = []
+    const ref = reference.price
+    if (ref == null) errs.push('Managed exits need a reference price. Use LIMIT or open from a premium-enabled context.')
+    if (ref != null && slPrice != null) {
+      if (side === 'BUY' && slPrice >= ref) errs.push('Stop loss should be below reference for BUY.')
+      if (side === 'SELL' && slPrice <= ref) errs.push('Stop loss should be above reference for SELL.')
+    }
+    if (ref != null && tpPrice != null) {
+      if (side === 'BUY' && tpPrice <= ref) errs.push('Target should be above reference for BUY.')
+      if (side === 'SELL' && tpPrice >= ref) errs.push('Target should be below reference for SELL.')
+    }
+    if (trailEnabled) {
+      if (trailPrice != null && trailPrice <= 0) errs.push('Trailing SL distance must be > 0.')
+      if (trailPct != null && trailPct >= 0) errs.push('Trailing SL percent should be negative (protective).')
+    }
+    return errs
+  }, [managedExits, reference.price, side, slPrice, tpPrice, trailEnabled, trailPct, trailPrice])
 
   const previewMutation = useMutation({
     mutationFn: async () => {
@@ -662,50 +824,78 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
                     setPreview(null)
                   }}
                 />
+                <div className="text-[11px] text-muted-foreground">
+                  Lot size: {preview?.instrument?.lot_size ?? instrument?.lot_size ?? '—'} • Qty:{' '}
+                  {derivedQuantity ?? '—'}
+                </div>
               </div>
 
               <div className="space-y-1">
-                <div className="text-xs font-medium text-muted-foreground">Product</div>
-                <select
-                  aria-label="F&O product"
-                  value={product}
-                  onChange={(e) => {
-                    const next = e.target.value as 'MIS' | 'NRML'
-                    setProduct(next)
-                    setFnoProductPref(next)
-                    setPreview(null)
-                  }}
-                  className={cn(
-                    'h-10 w-full rounded-md border bg-background px-2 text-sm outline-none',
-                    'focus-visible:ring-2 focus-visible:ring-ring',
-                  )}
-                >
-                  <option value="NRML">NRML</option>
-                  <option value="MIS">MIS</option>
-                </select>
+                <div className="text-xs font-medium text-muted-foreground">Mode</div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={productMode === 'intraday' ? 'default' : 'outline'}
+                    onClick={() => {
+                      setProductMode('intraday')
+                      setFnoProductPref('MIS')
+                      setPreview(null)
+                    }}
+                  >
+                    Intraday
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={productMode === 'carry_forward' ? 'default' : 'outline'}
+                    onClick={() => {
+                      setProductMode('carry_forward')
+                      setFnoProductPref('NRML')
+                      setPreview(null)
+                    }}
+                  >
+                    Carry forward
+                  </Button>
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  Product: <span className="font-mono">{product}</span>
+                </div>
               </div>
             </div>
           ) : (
             <div className="grid gap-3 lg:grid-cols-3">
               <div className="space-y-1">
-                <div className="text-xs font-medium text-muted-foreground">Product</div>
-                <select
-                  aria-label="F&O product"
-                  value={product}
-                  onChange={(e) => {
-                    const next = e.target.value as 'MIS' | 'NRML'
-                    setProduct(next)
-                    setFnoProductPref(next)
-                    setPreview(null)
-                  }}
-                  className={cn(
-                    'h-10 w-full rounded-md border bg-background px-2 text-sm outline-none',
-                    'focus-visible:ring-2 focus-visible:ring-ring',
-                  )}
-                >
-                  <option value="NRML">NRML</option>
-                  <option value="MIS">MIS</option>
-                </select>
+                <div className="text-xs font-medium text-muted-foreground">Mode</div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={productMode === 'intraday' ? 'default' : 'outline'}
+                    onClick={() => {
+                      setProductMode('intraday')
+                      setFnoProductPref('MIS')
+                      setPreview(null)
+                    }}
+                  >
+                    Intraday
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={productMode === 'carry_forward' ? 'default' : 'outline'}
+                    onClick={() => {
+                      setProductMode('carry_forward')
+                      setFnoProductPref('NRML')
+                      setPreview(null)
+                    }}
+                  >
+                    Carry forward
+                  </Button>
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  Product: <span className="font-mono">{product}</span>
+                </div>
               </div>
               <div className="space-y-1">
                 <div className="text-xs font-medium text-muted-foreground">Order type</div>
@@ -808,6 +998,222 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
               </div>
             </div>
           ) : null}
+
+          <div className="rounded-lg border bg-card p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-1">
+                <div className="text-sm font-medium">Execution plan</div>
+                <div className="text-xs text-muted-foreground">
+                  Managed exits are app-managed; broker receives only the entry order.
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">
+                  Ref: {reference.price != null ? reference.price : '—'}{' '}
+                  {reference.source ? `(${reference.source})` : ''}
+                </Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={managedExits ? 'default' : 'outline'}
+                  onClick={() => {
+                    setManagedExits((v) => !v)
+                    setPreview(null)
+                  }}
+                >
+                  {managedExits ? 'Managed trade' : 'Simple order'}
+                </Button>
+              </div>
+            </div>
+
+            {managedExits ? (
+              <div className="mt-3 grid gap-3">
+                {planErrors.length ? (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-900 dark:text-amber-200">
+                    <ul className="list-disc space-y-1 pl-4">
+                      {planErrors.map((e) => (
+                        <li key={e}>{e}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                <div className="grid gap-3 lg:grid-cols-3">
+                  <div className="space-y-1 lg:col-span-1">
+                    <div className="text-xs font-medium text-muted-foreground">Stop loss</div>
+                    <div className="text-[11px] text-muted-foreground">Protective level</div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[11px] text-muted-foreground">Price</div>
+                    <Input
+                      aria-label="Stop loss price"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.05"
+                      value={slPrice ?? ''}
+                      onChange={(e) => {
+                        const v = parseNumber(e.target.value)
+                        setSlPrice(v)
+                        setSlBasis('price')
+                        if (reference.price != null && v != null) {
+                          setSlPct(roundTo(signedPctFromPrice(side, reference.price, v), 2))
+                        } else {
+                          setSlPct(null)
+                        }
+                        setPreview(null)
+                      }}
+                      placeholder="—"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[11px] text-muted-foreground">%</div>
+                    <Input
+                      aria-label="Stop loss percent"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      value={slPct ?? ''}
+                      onChange={(e) => {
+                        const v = parseNumber(e.target.value)
+                        setSlPct(v)
+                        setSlBasis('pct')
+                        if (reference.price != null && v != null) {
+                          setSlPrice(roundTo(priceFromSignedPct(side, reference.price, v), 2))
+                        } else {
+                          setSlPrice(null)
+                        }
+                        setPreview(null)
+                      }}
+                      placeholder="—"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-3">
+                  <div className="space-y-1 lg:col-span-1">
+                    <div className="text-xs font-medium text-muted-foreground">Target</div>
+                    <div className="text-[11px] text-muted-foreground">Profit-taking level</div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[11px] text-muted-foreground">Price</div>
+                    <Input
+                      aria-label="Target price"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.05"
+                      value={tpPrice ?? ''}
+                      onChange={(e) => {
+                        const v = parseNumber(e.target.value)
+                        setTpPrice(v)
+                        setTpBasis('price')
+                        if (reference.price != null && v != null) {
+                          setTpPct(roundTo(signedPctFromPrice(side, reference.price, v), 2))
+                        } else {
+                          setTpPct(null)
+                        }
+                        setPreview(null)
+                      }}
+                      placeholder="—"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[11px] text-muted-foreground">%</div>
+                    <Input
+                      aria-label="Target percent"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      value={tpPct ?? ''}
+                      onChange={(e) => {
+                        const v = parseNumber(e.target.value)
+                        setTpPct(v)
+                        setTpBasis('pct')
+                        if (reference.price != null && v != null) {
+                          setTpPrice(roundTo(priceFromSignedPct(side, reference.price, v), 2))
+                        } else {
+                          setTpPrice(null)
+                        }
+                        setPreview(null)
+                      }}
+                      placeholder="—"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-3">
+                  <div className="space-y-1 lg:col-span-1">
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs font-medium text-muted-foreground">Trailing SL</div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={trailEnabled ? 'default' : 'outline'}
+                        onClick={() => {
+                          setTrailEnabled((v) => !v)
+                          setPreview(null)
+                        }}
+                      >
+                        {trailEnabled ? 'On' : 'Off'}
+                      </Button>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">Protective distance (loss-side)</div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[11px] text-muted-foreground">Price</div>
+                    <Input
+                      aria-label="Trailing SL price"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.05"
+                      disabled={!trailEnabled}
+                      value={trailPrice ?? ''}
+                      onChange={(e) => {
+                        const v = parseNumber(e.target.value)
+                        setTrailPrice(v)
+                        setTrailBasis('price')
+                        if (reference.price != null && v != null) {
+                          const pct = -Math.abs(v / reference.price) * 100
+                          setTrailPct(roundTo(pct, 2))
+                        } else {
+                          setTrailPct(null)
+                        }
+                        setPreview(null)
+                      }}
+                      placeholder="—"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[11px] text-muted-foreground">%</div>
+                    <Input
+                      aria-label="Trailing SL percent"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      disabled={!trailEnabled}
+                      value={trailPct ?? ''}
+                      onChange={(e) => {
+                        const v = parseNumber(e.target.value)
+                        setTrailPct(v)
+                        setTrailBasis('pct')
+                        if (reference.price != null && v != null) {
+                          const dist = (Math.abs(v) / 100) * reference.price
+                          setTrailPrice(roundTo(dist, 2))
+                        } else {
+                          setTrailPrice(null)
+                        }
+                        setPreview(null)
+                      }}
+                      placeholder="—"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 text-xs text-muted-foreground">
+                Simple order submits only the entry order (no app-managed exits).
+              </div>
+            )}
+          </div>
 
           <div className="rounded-lg border bg-card p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -945,6 +1351,7 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
               !schemaOk ||
               zerodhaMarketBlocked ||
               !preview ||
+              planErrors.length > 0 ||
               createMutation.isPending
             }
           >

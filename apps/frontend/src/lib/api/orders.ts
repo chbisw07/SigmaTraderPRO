@@ -11,6 +11,37 @@ export type OrderIntentType = 'ENTRY' | 'EXIT' | 'SL' | 'TARGET' | 'TRAIL'
 export type OrderTriggerMode = 'MARKET' | 'LIMIT' | 'SL' | 'SLM'
 export type RiskMode = 'ABSOLUTE' | 'POINTS' | 'PERCENT'
 
+export type ExecutionIntentVersion = '1'
+export type ProductMode = 'delivery' | 'intraday' | 'carry_forward'
+export type PriceAndPct = { price: number | null; pct: number | null }
+export type TrailingStop = { enabled: boolean; distance: PriceAndPct }
+export type ExecutionPlan = {
+  managed_exits: boolean
+  reference_price: number | null
+  reference_source: string | null
+  stop_loss: PriceAndPct
+  target: PriceAndPct
+  trailing_sl: TrailingStop
+}
+export type EntryIntent = {
+  broker: BrokerKey
+  canonical_id: string
+  side: OrderSide
+  product_mode: ProductMode
+  product: OrderProduct
+  order_type: OrderType
+  limit_price: number | null
+  quantity: number
+  lots: number | null
+  lot_size: number | null
+}
+export type ExecutionIntent = {
+  version: ExecutionIntentVersion
+  entry: EntryIntent
+  plan: ExecutionPlan
+  source_context?: string | null
+}
+
 export type OrderIntentMetadata = {
   source?: OrderSource
   intent_type?: OrderIntentType
@@ -32,6 +63,7 @@ export type StockOrderBase = {
   product: OrderProduct
   order_type: OrderType
   limit_price?: number | null
+  execution_intent?: ExecutionIntent | null
 } & OrderIntentMetadata
 
 export type DerivativeInstrumentType = 'OPTION' | 'FUTURE'
@@ -48,6 +80,7 @@ export type FnoOrderBase = {
   product: 'MIS' | 'NRML'
   order_type: OrderType
   limit_price?: number | null
+  execution_intent?: ExecutionIntent | null
 } & OrderIntentMetadata
 
 export type { InstrumentOut }
@@ -140,6 +173,7 @@ export type OrderDetailResponse = {
   order: OrderOut
   preview_snapshot_json: Record<string, unknown> | null
   broker_payload_json: Record<string, unknown> | null
+  execution_intent_json?: Record<string, unknown> | null
 }
 
 export type OrderDraft = {
@@ -154,6 +188,7 @@ export type OrderDraft = {
   limit_price: number | null
   reference_price: number | null
   intent: Required<OrderIntentMetadata>
+  execution_intent?: ExecutionIntent | null
 }
 
 export type OrderDraftResponse = { draft: OrderDraft }

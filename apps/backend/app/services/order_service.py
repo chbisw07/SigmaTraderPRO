@@ -28,6 +28,14 @@ from app.orders.types import (
     OrderType,
     RiskMode,
 )
+from app.schemas.execution_intent import (
+    EntryIntent,
+    ExecutionIntent,
+    ExecutionPlan,
+    PriceAndPct,
+    ProductMode,
+    TrailingStop,
+)
 from app.services.broker_service import broker_service
 from app.services.dispatch_gating_service import (
     DispatchGateResult,
@@ -86,6 +94,7 @@ class StockOrderPreview:
     parent_order_id: int | None
     linked_position_id: int | None
     broker_context: str | None
+    execution_intent_json: dict | None
     warnings: list[str]
 
 
@@ -107,6 +116,7 @@ def _ensure_orders_schema(db: Session, *, require_lots: bool = False) -> None:
             "blocked_reason_message",
             "failure_reason_code",
             "failure_reason_message",
+            "execution_intent_json",
         }
         missing_cols = sorted([c for c in required_cols if c not in cols])
         if missing_cols:
@@ -143,6 +153,7 @@ class FnoOrderPreview:
     parent_order_id: int | None
     linked_position_id: int | None
     broker_context: str | None
+    execution_intent_json: dict | None
     warnings: list[str]
 
 
@@ -179,6 +190,53 @@ def _validate_broker_constraints(*, broker: BrokerKey, order_type: OrderType) ->
         raise OrderValidationError(
             "Zerodha MARKET orders require market protection; use LIMIT for now"
         )
+
+
+def _product_mode_for_product(product: OrderProduct) -> ProductMode:
+    if product == OrderProduct.CNC:
+        return ProductMode.delivery
+    if product == OrderProduct.MIS:
+        return ProductMode.intraday
+    return ProductMode.carry_forward
+
+
+def _synthesize_execution_intent_json(
+    *,
+    broker: BrokerKey,
+    canonical_id: str,
+    side: OrderSide,
+    product: OrderProduct,
+    order_type: OrderType,
+    limit_price: float | None,
+    quantity: int,
+    lots: int | None = None,
+    lot_size: int | None = None,
+    reference_price: float | None = None,
+    reference_source: str | None = None,
+) -> dict:
+    plan = ExecutionPlan(
+        managed_exits=False,
+        reference_price=reference_price,
+        reference_source=reference_source,
+        stop_loss=PriceAndPct(price=None, pct=None),
+        target=PriceAndPct(price=None, pct=None),
+        trailing_sl=TrailingStop(
+            enabled=False, distance=PriceAndPct(price=None, pct=None)
+        ),
+    )
+    entry = EntryIntent(
+        broker=broker,
+        canonical_id=canonical_id,
+        side=side,
+        product_mode=_product_mode_for_product(product),
+        product=product,
+        order_type=order_type,
+        limit_price=limit_price if order_type == OrderType.LIMIT else None,
+        quantity=quantity,
+        lots=lots,
+        lot_size=lot_size,
+    )
+    return ExecutionIntent(entry=entry, plan=plan).model_dump(mode="json")
 
 
 def _resolve_contract(
@@ -303,6 +361,7 @@ class OrderService:
         parent_order_id: int | None = None,
         linked_position_id: int | None = None,
         broker_context: str | None = None,
+        execution_intent_json: dict | None = None,
     ) -> StockOrderPreview:
         if quantity <= 0:
             raise OrderValidationError("quantity must be >= 1")
@@ -327,6 +386,41 @@ class OrderService:
             order_type=order_type,
             limit_price=limit_price if order_type == OrderType.LIMIT else None,
         )
+
+        if execution_intent_json is not None:
+            try:
+                intent = ExecutionIntent.model_validate(execution_intent_json)
+            except Exception as exc:  # noqa: BLE001
+                raise OrderValidationError("Invalid execution_intent payload") from exc
+            if intent.entry.broker != broker:
+                raise OrderValidationError("execution_intent broker mismatch")
+            if intent.entry.canonical_id != instrument.canonical_id:
+                raise OrderValidationError("execution_intent canonical_id mismatch")
+            if intent.entry.side != side:
+                raise OrderValidationError("execution_intent side mismatch")
+            if intent.entry.product != product:
+                raise OrderValidationError("execution_intent product mismatch")
+            if intent.entry.order_type != order_type:
+                raise OrderValidationError("execution_intent order_type mismatch")
+            if intent.entry.quantity != quantity:
+                raise OrderValidationError("execution_intent quantity mismatch")
+            execution_intent_json = intent.model_dump(mode="json")
+
+        if execution_intent_json is None:
+            ref_price = limit_price if order_type == OrderType.LIMIT else None
+            execution_intent_json = _synthesize_execution_intent_json(
+                broker=broker,
+                canonical_id=instrument.canonical_id,
+                side=side,
+                product=product,
+                order_type=order_type,
+                limit_price=limit_price,
+                quantity=quantity,
+                lots=None,
+                lot_size=instrument.lot_size,
+                reference_price=ref_price,
+                reference_source="limit_price" if ref_price is not None else None,
+            )
         return StockOrderPreview(
             instrument=instrument,
             broker=broker,
@@ -346,6 +440,7 @@ class OrderService:
             parent_order_id=parent_order_id,
             linked_position_id=linked_position_id,
             broker_context=broker_context,
+            execution_intent_json=execution_intent_json,
             warnings=warnings,
         )
 
@@ -355,6 +450,7 @@ class OrderService:
         *,
         user: User,
         broker: BrokerKey,
+        canonical_id: str | None,
         instrument_type: InstrumentType,
         underlying: str,
         expiry,
@@ -374,6 +470,7 @@ class OrderService:
         parent_order_id: int | None = None,
         linked_position_id: int | None = None,
         broker_context: str | None = None,
+        execution_intent_json: dict | None = None,
     ) -> FnoOrderPreview:
         if instrument_type not in {InstrumentType.OPTION, InstrumentType.FUTURE}:
             raise OrderValidationError("instrument_type must be OPTION or FUTURE")
@@ -384,14 +481,24 @@ class OrderService:
         _validate_broker_constraints(broker=broker, order_type=order_type)
         _validate_price(order_type, limit_price)
 
-        instrument = _find_derivative_instrument(
-            db,
-            instrument_type=instrument_type,
-            underlying=underlying,
-            expiry=expiry,
-            strike=strike,
-            option_type=option_type,
-        )
+        instrument = None
+        if canonical_id:
+            instrument = instrument_registry_service.get_by_canonical_id(
+                db, canonical_id
+            )
+            if instrument and instrument.exchange != Exchange.NSE_FNO.value:
+                instrument = None
+            if instrument and instrument.instrument_type != instrument_type.value:
+                instrument = None
+        if instrument is None:
+            instrument = _find_derivative_instrument(
+                db,
+                instrument_type=instrument_type,
+                underlying=underlying,
+                expiry=expiry,
+                strike=strike,
+                option_type=option_type,
+            )
         if not instrument:
             raise OrderValidationError("F&O instrument not found")
 
@@ -412,6 +519,43 @@ class OrderService:
             order_type=order_type,
             limit_price=limit_price if order_type == OrderType.LIMIT else None,
         )
+
+        if execution_intent_json is not None:
+            try:
+                intent = ExecutionIntent.model_validate(execution_intent_json)
+            except Exception as exc:  # noqa: BLE001
+                raise OrderValidationError("Invalid execution_intent payload") from exc
+            if intent.entry.broker != broker:
+                raise OrderValidationError("execution_intent broker mismatch")
+            if intent.entry.canonical_id != instrument.canonical_id:
+                raise OrderValidationError("execution_intent canonical_id mismatch")
+            if intent.entry.side != side:
+                raise OrderValidationError("execution_intent side mismatch")
+            if intent.entry.product != product:
+                raise OrderValidationError("execution_intent product mismatch")
+            if intent.entry.order_type != order_type:
+                raise OrderValidationError("execution_intent order_type mismatch")
+            if intent.entry.quantity != quantity:
+                raise OrderValidationError("execution_intent quantity mismatch")
+            if intent.entry.lots is not None and intent.entry.lots != lots:
+                raise OrderValidationError("execution_intent lots mismatch")
+            execution_intent_json = intent.model_dump(mode="json")
+
+        if execution_intent_json is None:
+            ref_price = limit_price if order_type == OrderType.LIMIT else None
+            execution_intent_json = _synthesize_execution_intent_json(
+                broker=broker,
+                canonical_id=instrument.canonical_id,
+                side=side,
+                product=product,
+                order_type=order_type,
+                limit_price=limit_price,
+                quantity=quantity,
+                lots=lots,
+                lot_size=instrument.lot_size,
+                reference_price=ref_price,
+                reference_source="limit_price" if ref_price is not None else None,
+            )
         return FnoOrderPreview(
             instrument=instrument,
             broker=broker,
@@ -432,6 +576,7 @@ class OrderService:
             parent_order_id=parent_order_id,
             linked_position_id=linked_position_id,
             broker_context=broker_context,
+            execution_intent_json=execution_intent_json,
             warnings=warnings,
         )
 
@@ -493,6 +638,7 @@ class OrderService:
                 "order_type": preview.request.order_type.value,
                 "limit_price": preview.request.limit_price,
             },
+            execution_intent_json=preview.execution_intent_json,
             margin_snapshot_json=None,
             correlation_id=correlation_id,
             blocked_reason_code=None,
@@ -737,6 +883,7 @@ class OrderService:
                 "order_type": preview.request.order_type.value,
                 "limit_price": preview.request.limit_price,
             },
+            execution_intent_json=preview.execution_intent_json,
             margin_snapshot_json=None,
             lots=preview.lots,
             correlation_id=correlation_id,

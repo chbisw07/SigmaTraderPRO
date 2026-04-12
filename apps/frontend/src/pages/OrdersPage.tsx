@@ -143,6 +143,7 @@ export function OrdersPage() {
           product: draft.product,
           order_type: draft.order_type,
           limit_price: draft.limit_price,
+          execution_intent: draft.execution_intent ?? null,
           intent: draft.intent,
         },
       })
@@ -159,6 +160,7 @@ export function OrdersPage() {
           product: draft.product === 'NRML' || draft.product === 'MIS' ? draft.product : 'NRML',
           order_type: draft.order_type,
           limit_price: draft.limit_price,
+          execution_intent: draft.execution_intent ?? null,
           intent: draft.intent,
         },
       })
@@ -524,6 +526,11 @@ export function OrdersPage() {
                 <pre className="max-h-[360px] overflow-auto rounded-md border bg-muted/30 p-3 text-xs">
                   {JSON.stringify(orderDetail.data.broker_payload_json, null, 2)}
                 </pre>
+                {orderDetail.data.execution_intent_json ? (
+                  <pre className="max-h-[360px] overflow-auto rounded-md border bg-muted/30 p-3 text-xs">
+                    {JSON.stringify(orderDetail.data.execution_intent_json, null, 2)}
+                  </pre>
+                ) : null}
               </>
             ) : (
               <div className="text-sm text-muted-foreground">No payload available.</div>
