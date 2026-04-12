@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     audit_csv_max_bytes: int = Field(
         default=10 * 1024 * 1024, validation_alias="AUDIT_CSV_MAX_BYTES"
     )
+    audit_csv_retention_days: int = Field(
+        default=14, validation_alias="AUDIT_CSV_RETENTION_DAYS"
+    )
 
     jwt_secret_key: str = Field(
         default="dev-insecure-change-me-please-use-32-bytes-min",

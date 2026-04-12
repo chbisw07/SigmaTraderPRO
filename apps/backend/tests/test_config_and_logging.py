@@ -23,6 +23,7 @@ def test_settings_load_from_env_file(tmp_path) -> None:
                 f"LOG_DIR={tmp_path / 'logs'}",
                 f"AUDIT_CSV_DIR={tmp_path / 'audit'}",
                 "AUDIT_CSV_MAX_BYTES=1234",
+                "AUDIT_CSV_RETENTION_DAYS=9",
                 "DATABASE_URL=postgresql+psycopg://u:p@127.0.0.1:5432/db",
                 "REDIS_URL=redis://127.0.0.1:6379/0",
                 "",
@@ -34,6 +35,7 @@ def test_settings_load_from_env_file(tmp_path) -> None:
     s = Settings(_env_file=env_file, _env_file_encoding="utf-8")
     assert s.log_level == "DEBUG"
     assert s.audit_csv_max_bytes == 1234
+    assert s.audit_csv_retention_days == 9
 
 
 def test_startup_diagnostics_are_safe() -> None:
@@ -57,10 +59,17 @@ def test_logger_smoke() -> None:
 
 
 def test_sanitization_redacts_sensitive_keys() -> None:
-    payload = {"token": "abc", "nested": {"password": "p"}, "ok": 1}
+    payload = {
+        "token": "abc",
+        "nested": {"password": "p", "route_token": "rt"},
+        "jwt_token": "jwt",
+        "ok": 1,
+    }
     sanitized = sanitize(payload)
     assert sanitized["token"] == "***REDACTED***"
     assert sanitized["nested"]["password"] == "***REDACTED***"
+    assert sanitized["nested"]["route_token"] == "***REDACTED***"
+    assert sanitized["jwt_token"] == "***REDACTED***"
     assert sanitized["ok"] == 1
 
 
@@ -90,3 +99,45 @@ def test_csv_audit_logger_writes_and_redacts(tmp_path) -> None:
     assert "ST_20260409" in path.name
     assert "access_token" in content
     assert "secret-token" not in content
+
+
+def test_csv_audit_logger_rotates_by_size(tmp_path) -> None:
+    fixed = datetime(2026, 4, 9, 12, 0, 0, tzinfo=UTC)
+    audit = CsvAuditLogger(
+        CsvAuditConfig(directory=tmp_path, prefix="ST", max_bytes=1, now=lambda: fixed)
+    )
+    p1 = audit.log(
+        level="INFO",
+        module="test",
+        category="system",
+        event_type="startup",
+        message="first",
+        details={"ok": True},
+    )
+    p2 = audit.log(
+        level="INFO",
+        module="test",
+        category="system",
+        event_type="startup",
+        message="second",
+        details={"ok": True},
+    )
+    assert p1.name != p2.name
+    assert p2.name.endswith("_02.csv")
+
+
+def test_csv_audit_logger_retention_cleanup(tmp_path) -> None:
+    fixed = datetime(2026, 4, 12, 12, 0, 0, tzinfo=UTC)
+    # Create two older days.
+    (tmp_path / "ST_20260401.csv").write_text("x", encoding="utf-8")
+    (tmp_path / "ST_20260301_02.csv").write_text("x", encoding="utf-8")
+    (tmp_path / "ST_20260412.csv").write_text("x", encoding="utf-8")
+
+    audit = CsvAuditLogger(
+        CsvAuditConfig(directory=tmp_path, prefix="ST", now=lambda: fixed)
+    )
+    deleted = audit.cleanup_old_files(keep_days=10)
+    assert deleted >= 1
+    assert not (tmp_path / "ST_20260401.csv").exists()
+    assert not (tmp_path / "ST_20260301_02.csv").exists()
+    assert (tmp_path / "ST_20260412.csv").exists()

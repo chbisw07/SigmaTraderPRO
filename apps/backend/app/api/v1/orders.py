@@ -309,6 +309,7 @@ def create(
                 category="orders",
                 event_type="create",
                 message="order_create_failed",
+                correlation_id=correlation_id,
                 user_id=str(current_user.id),
                 broker=payload.broker.value,
                 instrument_key=payload.canonical_id,
@@ -395,6 +396,8 @@ def create(
                 "order_type": payload.order_type.value,
                 "gate_allowed": getattr(gate, "allowed", None),
                 "gate_reason_code": getattr(gate, "reason_code", None),
+                "blocked_reason_code": getattr(order, "blocked_reason_code", None),
+                "failure_reason_code": getattr(order, "failure_reason_code", None),
             },
         )
 
@@ -622,6 +625,7 @@ def create_fno(
                 category="orders",
                 event_type="create",
                 message="order_create_fno_failed",
+                correlation_id=correlation_id,
                 user_id=str(current_user.id),
                 broker=payload.broker.value,
                 instrument_key=preview.instrument.canonical_id,
@@ -709,6 +713,8 @@ def create_fno(
                 "order_type": payload.order_type.value,
                 "gate_allowed": getattr(gate, "allowed", None),
                 "gate_reason_code": getattr(gate, "reason_code", None),
+                "blocked_reason_code": getattr(order, "blocked_reason_code", None),
+                "failure_reason_code": getattr(order, "failure_reason_code", None),
             },
         )
 
@@ -909,6 +915,7 @@ def reverse_order(
 
 @router.post("/reconcile")
 def reconcile_orders(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, object]:
@@ -968,6 +975,25 @@ def reconcile_orders(
                 "canonical_id": t.get("canonical_id"),
                 "from_status": t.get("from_status"),
                 "to_status": t.get("to_status"),
+            },
+        )
+
+    audit = getattr(request.app.state, "csv_audit", None)
+    if audit:
+        audit.log(
+            level="INFO" if not broker_errors else "WARNING",
+            module=__name__,
+            category="broker_sync",
+            event_type="orders_reconcile",
+            message="orders_reconciled",
+            correlation_id=reconcile_correlation_id,
+            user_id=str(current_user.id),
+            action="reconcile",
+            status="ok",
+            details={
+                "updated": updated,
+                "transitions": len(transitions),
+                "brokers_with_errors": sorted(broker_errors.keys()),
             },
         )
     if broker_errors:

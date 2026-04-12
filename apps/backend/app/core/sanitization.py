@@ -12,6 +12,12 @@ SENSITIVE_KEY_EXACT = {
     "api_key",
     "refresh_token",
     "access_token",
+    "route_token",
+    "jwt_token",
+    "feed_token",
+    "session_enc",
+    "credentials_enc",
+    "broker_encryption_key",
 }
 
 SENSITIVE_KEY_SUFFIXES = (
@@ -20,6 +26,10 @@ SENSITIVE_KEY_SUFFIXES = (
     "_secret",
     "_secret_key",
     "_api_key",
+    "_jwt_token",
+    "_route_token",
+    "_access_token",
+    "_refresh_token",
 )
 
 

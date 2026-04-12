@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 
@@ -27,8 +27,14 @@ def create_app() -> FastAPI:
                 directory=settings.audit_csv_dir,
                 prefix="ST",
                 max_bytes=settings.audit_csv_max_bytes,
+                retention_days=settings.audit_csv_retention_days,
             )
         )
+        # Best-effort cleanup on startup (also runs lazily during audit writes).
+        with suppress(Exception):
+            app.state.csv_audit.cleanup_old_files(
+                keep_days=int(settings.audit_csv_retention_days)
+            )
 
         diag = startup_diagnostics(settings)
         log_event(

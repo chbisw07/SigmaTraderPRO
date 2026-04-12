@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 @router.post("/webhook/tradingview", response_model=TradingViewWebhookResponse)
 async def tradingview(request: Request, db: Session = Depends(get_db)) -> JSONResponse:
     correlation_id = str(uuid4())
+    audit = getattr(request.app.state, "csv_audit", None)
     raw_text = ""
     try:
         raw = await request.body()
@@ -38,6 +39,22 @@ async def tradingview(request: Request, db: Session = Depends(get_db)) -> JSONRe
             reason_code="WEBHOOK_INVALID_PAYLOAD",
             reason_message="Unreadable request body",
         )
+        if audit:
+            audit.log(
+                level="WARNING",
+                module=__name__,
+                category="webhook_tradingview",
+                event_type="ingest",
+                message="tradingview_webhook_rejected_unreadable_body",
+                correlation_id=correlation_id,
+                action="ingest",
+                status="rejected",
+                details={
+                    "reason_code": "WEBHOOK_INVALID_PAYLOAD",
+                    "ingestion_id": row.id if row else None,
+                    "idempotency_key": row.idempotency_key if row else None,
+                },
+            )
         return JSONResponse(
             status_code=400,
             content=TradingViewWebhookResponse(
@@ -77,6 +94,22 @@ async def tradingview(request: Request, db: Session = Depends(get_db)) -> JSONRe
             status="rejected",
             reason_code="WEBHOOK_INVALID_PAYLOAD",
         )
+        if audit:
+            audit.log(
+                level="WARNING",
+                module=__name__,
+                category="webhook_tradingview",
+                event_type="ingest",
+                message="tradingview_webhook_rejected_invalid_json",
+                correlation_id=correlation_id,
+                action="ingest",
+                status="rejected",
+                details={
+                    "reason_code": "WEBHOOK_INVALID_PAYLOAD",
+                    "ingestion_id": row.id if row else None,
+                    "idempotency_key": row.idempotency_key if row else None,
+                },
+            )
         return JSONResponse(
             status_code=400,
             content=TradingViewWebhookResponse(
@@ -105,6 +138,22 @@ async def tradingview(request: Request, db: Session = Depends(get_db)) -> JSONRe
             reason_code="WEBHOOK_INVALID_PAYLOAD",
             reason_message="Payload must be a JSON object",
         )
+        if audit:
+            audit.log(
+                level="WARNING",
+                module=__name__,
+                category="webhook_tradingview",
+                event_type="ingest",
+                message="tradingview_webhook_rejected_non_object",
+                correlation_id=correlation_id,
+                action="ingest",
+                status="rejected",
+                details={
+                    "reason_code": "WEBHOOK_INVALID_PAYLOAD",
+                    "ingestion_id": row.id if row else None,
+                    "idempotency_key": row.idempotency_key if row else None,
+                },
+            )
         return JSONResponse(
             status_code=400,
             content=TradingViewWebhookResponse(
@@ -121,6 +170,26 @@ async def tradingview(request: Request, db: Session = Depends(get_db)) -> JSONRe
     result = webhook_ingestion_service.ingest_tradingview(
         db, payload=body, correlation_id=correlation_id
     )
+    if audit:
+        resp = result.response
+        audit.log(
+            level="INFO" if resp.ok else "WARNING",
+            module=__name__,
+            category="webhook_tradingview",
+            event_type="ingest",
+            message=f"tradingview_webhook_{resp.status}",
+            correlation_id=resp.correlation_id,
+            action="ingest",
+            status=str(resp.status),
+            details={
+                "ok": resp.ok,
+                "reason_code": resp.reason_code,
+                "duplicate_ignored": getattr(resp, "duplicate_ignored", False),
+                "idempotency_key": resp.idempotency_key,
+                "ingestion_id": resp.ingestion_id,
+                "http_status": result.http_status,
+            },
+        )
     return JSONResponse(
         status_code=result.http_status,
         content=result.response.model_dump(),

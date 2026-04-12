@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -245,6 +245,7 @@ def refresh_position(
 
 @router.post("/sync")
 def sync_positions(
+    request: Request,
     broker: str | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -342,6 +343,26 @@ def sync_positions(
             "broker_errors": broker_errors,
         },
     )
+
+    audit = getattr(request.app.state, "csv_audit", None)
+    if audit:
+        audit.log(
+            level="INFO" if not broker_errors else "WARNING",
+            module=__name__,
+            category="broker_sync",
+            event_type="positions_sync",
+            message="positions_synced",
+            correlation_id=str(uuid4()),
+            user_id=str(current_user.id),
+            action="sync",
+            status="ok",
+            details={
+                "synced": total_upserted,
+                "closed": total_closed,
+                "skipped_unmapped": total_skipped,
+                "broker_errors": broker_errors,
+            },
+        )
 
     return {
         "status": "ok",
