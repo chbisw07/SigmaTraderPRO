@@ -505,3 +505,87 @@ def test_orders_workspace_search_and_product_filter(
     items4 = resp4.json()["items"]
     assert len(items4) == 1
     assert items4[0]["internal_order_id"] == o1.id
+
+
+def test_orders_workspace_marks_unresolved_when_broker_truth_differs(
+    db_session: Session, client: TestClient, monkeypatch
+) -> None:
+    user = _create_user(
+        db_session, email="u_unresolved@example.com", password="pass123"
+    )
+    _connect_angel(db_session, user_id=user.id)
+    inst = _ensure_equity_instrument(db_session, "NSE_EQ:EQUITY:EQUITY:INFY")
+    _map_instrument(db_session, inst)
+
+    db_session.add(
+        Order(
+            user_id=user.id,
+            broker_key="angel",
+            canonical_id=inst.canonical_id,
+            side="BUY",
+            quantity=1,
+            lots=None,
+            product="CNC",
+            order_type="LIMIT",
+            limit_price=10.0,
+            avg_executed_price=None,
+            source="manual_ui",
+            intent_type="ENTRY",
+            trigger_mode="LIMIT",
+            risk_mode=None,
+            sl_value=None,
+            tp_value=None,
+            trailing_value=None,
+            parent_order_id=None,
+            linked_position_id=None,
+            broker_context="angel",
+            preview_snapshot_json={"canonical_id": inst.canonical_id},
+            broker_payload_json=None,
+            broker_symbol_resolved="INFY-EQ",
+            broker_symbol_token_resolved="123",
+            lot_size_snapshot=1,
+            margin_snapshot_json=None,
+            status="ACKNOWLEDGED",
+            broker_order_id="BROKER_ORDER_1",
+            error_message=None,
+        )
+    )
+    db_session.commit()
+
+    class _FakeAdapter:
+        def fetch_recent_orders(self, db, user):
+            _ = (db, user)
+            return [
+                ExternalBrokerOrder(
+                    broker="angel",
+                    broker_order_id="BROKER_ORDER_1",
+                    exchange_order_id="EXCH_1",
+                    exchange="NSE",
+                    trading_symbol="INFY-EQ",
+                    broker_instrument_id="123",
+                    placed_at=datetime.now(tz=UTC),
+                    side="BUY",
+                    product="DELIVERY",
+                    order_type="LIMIT",
+                    quantity=1,
+                    price=10.0,
+                    avg_price=10.0,
+                    status="COMPLETE",
+                    rejection_reason=None,
+                )
+            ]
+
+    monkeypatch.setattr(
+        "app.services.orders_workspace_service.broker_service.get_adapter",
+        lambda broker: _FakeAdapter(),
+    )
+
+    access = _login(client, "u_unresolved@example.com", "pass123")
+    resp = client.get(
+        "/api/v1/orders/workspace?mode=merged&limit=50",
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp.status_code == 200
+    merged = [r for r in resp.json()["items"] if r["source_origin"] == "merged"]
+    assert merged
+    assert merged[0]["reconciliation_state"] == "unresolved"

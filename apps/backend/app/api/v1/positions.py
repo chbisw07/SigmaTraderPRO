@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -26,6 +28,7 @@ from app.schemas.order import OrderDraft, OrderDraftResponse, OrderIntentMetadat
 from app.schemas.position import PositionListResponse, PositionOut
 from app.services.instrument_sync_service import instrument_sync_service
 from app.services.position_service import position_service
+from app.services.system_events_service import SystemEventLevel, system_events_service
 
 router = APIRouter(prefix="/positions", tags=["positions"])
 
@@ -322,6 +325,23 @@ def sync_positions(
         msg = f"{msg}. Warnings: " + ", ".join(
             [f"{k}={v}" for k, v in broker_errors.items()]
         )
+
+    # Operator-visible durable event (best-effort).
+    ev_level = SystemEventLevel.INFO if not broker_errors else SystemEventLevel.WARNING
+    system_events_service.emit(
+        db,
+        level=ev_level,
+        category="broker_sync",
+        message=f"Positions synced: upserted {total_upserted}, closed {total_closed}",
+        correlation_id=str(uuid4()),
+        user_id=current_user.id,
+        metadata={
+            "synced": total_upserted,
+            "closed": total_closed,
+            "skipped_unmapped": total_skipped,
+            "broker_errors": broker_errors,
+        },
+    )
 
     return {
         "status": "ok",

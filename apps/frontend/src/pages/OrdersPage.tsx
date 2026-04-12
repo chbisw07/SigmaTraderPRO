@@ -15,6 +15,8 @@ import * as positionsApi from '@/lib/api/positions'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 
+const EMPTY_ROWS: ordersApi.OrdersWorkspaceRow[] = []
+
 function StatusBadge({ status }: { status: string | null }) {
   const s = (status ?? '—').toUpperCase()
   const cls =
@@ -86,8 +88,12 @@ export function OrdersPage() {
     refetchInterval: 30_000,
   })
 
-  const rows = orders.data?.items ?? []
+  const rows = orders.data?.items ?? EMPTY_ROWS
   const brokerErrors = orders.data?.meta?.broker_errors ?? {}
+  const reconciliationNeeded = useMemo(() => {
+    if (!includeBrokerOrders) return 0
+    return rows.filter((r) => r.reconciliation_state === 'unresolved').length
+  }, [includeBrokerOrders, rows])
 
   const [payloadOpen, setPayloadOpen] = useState(false)
   const [payloadOrderId, setPayloadOrderId] = useState<number | null>(null)
@@ -249,6 +255,12 @@ export function OrdersPage() {
               </div>
             ))}
           </div>
+        </div>
+      ) : null}
+      {reconciliationNeeded ? (
+        <div className="rounded-md border bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+          {reconciliationNeeded} row{reconciliationNeeded === 1 ? '' : 's'} require reconciliation. Click{' '}
+          <span className="font-medium">Reconcile</span> to update internal order state from broker truth.
         </div>
       ) : null}
       {banner ? (

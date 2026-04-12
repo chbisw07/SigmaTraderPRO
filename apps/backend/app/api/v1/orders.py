@@ -47,6 +47,7 @@ from app.services.order_service import (
     order_service,
 )
 from app.services.orders_workspace_service import orders_workspace_service
+from app.services.system_events_service import SystemEventLevel, system_events_service
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 logger = get_logger(__name__)
@@ -910,9 +911,10 @@ def reverse_order(
 def reconcile_orders(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> dict[str, str]:
-    updated, broker_errors = orders_workspace_service.reconcile_internal_orders(
-        db, user=current_user
+) -> dict[str, object]:
+    reconcile_correlation_id = str(uuid4())
+    updated, broker_errors, transitions = (
+        orders_workspace_service.reconcile_internal_orders_report(db, user=current_user)
     )
     log_event(
         logger,
@@ -927,10 +929,59 @@ def reconcile_orders(
             "brokers_with_errors": sorted(list(broker_errors.keys())),
         },
     )
+
+    # Operator-visible durable events (bounded and best-effort).
+    level = SystemEventLevel.INFO if not broker_errors else SystemEventLevel.WARNING
+    system_events_service.emit(
+        db,
+        level=level,
+        category="broker_sync",
+        message=f"Orders reconciled: updated {updated}",
+        correlation_id=reconcile_correlation_id,
+        user_id=current_user.id,
+        metadata={
+            "updated": updated,
+            "broker_errors": broker_errors,
+            "transitions": len(transitions),
+        },
+    )
+
+    for t in transitions[:50]:
+        from_status = str(t.get("from_status") or "")
+        to_status = str(t.get("to_status") or "")
+        row_corr = str(t.get("correlation_id") or reconcile_correlation_id)
+        ev_level = SystemEventLevel.INFO
+        if to_status.upper() == "REJECTED":
+            ev_level = SystemEventLevel.WARNING
+        system_events_service.emit(
+            db,
+            level=ev_level,
+            category="broker_sync",
+            message=f"Order updated from broker truth: {from_status} → {to_status}",
+            correlation_id=row_corr,
+            user_id=current_user.id,
+            broker=str(t.get("broker") or ""),
+            metadata={
+                "reconcile_run_correlation_id": reconcile_correlation_id,
+                "order_id": t.get("order_id"),
+                "broker_order_id": t.get("broker_order_id"),
+                "canonical_id": t.get("canonical_id"),
+                "from_status": t.get("from_status"),
+                "to_status": t.get("to_status"),
+            },
+        )
     if broker_errors:
         brokers = ", ".join(sorted(broker_errors.keys()))
-        return {
-            "status": "ok",
-            "message": f"Reconciled {updated} orders (broker warnings: {brokers})",
-        }
-    return {"status": "ok", "message": f"Reconciled {updated} orders"}
+        message = f"Reconciled {updated} orders (broker warnings: {brokers})"
+    elif updated == 0:
+        message = "Reconciled 0 orders (no broker-matched updates found)"
+    else:
+        message = f"Reconciled {updated} orders"
+
+    return {
+        "status": "ok",
+        "message": message,
+        "updated": updated,
+        "transitions": len(transitions),
+        "brokers_with_errors": sorted(broker_errors.keys()),
+    }

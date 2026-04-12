@@ -125,6 +125,47 @@ class _ExternalRow:
 
 
 class OrdersWorkspaceService:
+    def _row_needs_reconciliation(
+        self, *, internal: Order, external: _ExternalRow
+    ) -> bool:
+        """
+        Detect when internal persisted state diverges from broker truth.
+
+        This does not mutate internal state; it only marks rows so the operator can
+        run an explicit reconcile.
+        """
+        internal_status = _coerce_status(internal.status)
+        if internal_status and external.status and internal_status != external.status:
+            return True
+
+        try:
+            internal_avg = (
+                float(internal.avg_executed_price)
+                if internal.avg_executed_price is not None
+                else None
+            )
+        except Exception:
+            internal_avg = None
+
+        try:
+            external_avg = (
+                float(external.avg_price) if external.avg_price is not None else None
+            )
+        except Exception:
+            external_avg = None
+
+        if (
+            internal_avg is not None
+            and external_avg is not None
+            and abs(internal_avg - external_avg) > 0.01
+        ):
+            return True
+
+        return bool(
+            external.rejection_reason
+            and (internal.error_message != external.rejection_reason)
+        )
+
     def _query_internal(
         self,
         db: Session,
@@ -339,6 +380,11 @@ class OrdersWorkspaceService:
                 placed_at = er.placed_at or match.order.created_at
                 if isinstance(placed_at, datetime) and placed_at.tzinfo is None:
                     placed_at = placed_at.replace(tzinfo=UTC)
+                recon_state = (
+                    OrdersReconciliationState.unresolved
+                    if self._row_needs_reconciliation(internal=match.order, external=er)
+                    else OrdersReconciliationState.matched
+                )
                 items.append(
                     OrdersWorkspaceRow(
                         row_id=(
@@ -346,7 +392,7 @@ class OrdersWorkspaceService:
                             f"{er.broker_order_id or 'na'}"
                         ),
                         source_origin=OrdersSourceOrigin.merged,
-                        reconciliation_state=OrdersReconciliationState.matched,
+                        reconciliation_state=recon_state,
                         broker=er.broker,
                         internal_order_id=match.order.id,
                         broker_order_id=(
@@ -560,6 +606,121 @@ class OrdersWorkspaceService:
                 broker_errors=broker_errors,
             ),
         )
+
+    def reconcile_internal_orders_report(
+        self,
+        db: Session,
+        *,
+        user: User,
+        broker: BrokerKey | None = None,
+        limit: int = 500,
+    ) -> tuple[int, dict[str, str], list[dict[str, str | int | None]]]:
+        """
+        Same reconciliation as `reconcile_internal_orders`, but returns a compact
+        report of status transitions for observability.
+        """
+        brokers = [BrokerKey.angel, BrokerKey.zerodha]
+        if broker:
+            brokers = [broker]
+
+        internal_qry = (
+            db.query(Order)
+            .filter(Order.user_id == user.id)
+            .order_by(Order.created_at.desc())
+            .limit(max(1, min(limit, 5000)))
+        )
+        internal_orders = list(internal_qry.all())
+
+        internal_by_broker_id: dict[tuple[str, str], Order] = {}
+        internal_by_exchange_id: dict[tuple[str, str], Order] = {}
+        for o in internal_orders:
+            if o.broker_key and o.broker_order_id:
+                internal_by_broker_id[(o.broker_key, o.broker_order_id)] = o
+            snap = o.preview_snapshot_json or {}
+            if isinstance(snap, dict):
+                exch = snap.get("exchange_order_id")
+                if exch and o.broker_key:
+                    internal_by_exchange_id[(o.broker_key, str(exch))] = o
+
+        updated = 0
+        broker_errors: dict[str, str] = {}
+        transitions: list[dict[str, str | int | None]] = []
+
+        for b in brokers:
+            external_rows, err = self._fetch_external(db, user=user, broker=b)
+            if err:
+                broker_errors[b.value] = err
+                continue
+
+            for er in external_rows:
+                match: Order | None = None
+                if er.broker_order_id:
+                    match = internal_by_broker_id.get((b.value, er.broker_order_id))
+                if not match and er.exchange_order_id:
+                    match = internal_by_exchange_id.get((b.value, er.exchange_order_id))
+                if not match:
+                    continue
+
+                before_status = match.status
+                changed = False
+
+                if er.status is not None and match.status != er.status.value:
+                    match.status = er.status.value
+                    changed = True
+
+                if er.avg_price is not None:
+                    try:
+                        next_avg = float(er.avg_price)
+                    except Exception:
+                        next_avg = None
+                    if next_avg is not None and (
+                        match.avg_executed_price is None
+                        or float(match.avg_executed_price) != next_avg
+                    ):
+                        match.avg_executed_price = next_avg
+                        changed = True
+
+                if er.placed_price is not None and match.limit_price is None:
+                    try:
+                        match.limit_price = float(er.placed_price)
+                        changed = True
+                    except Exception:
+                        pass
+
+                if er.rejection_reason and (match.error_message != er.rejection_reason):
+                    match.error_message = er.rejection_reason
+                    changed = True
+
+                if er.exchange_order_id:
+                    snap = match.preview_snapshot_json or {}
+                    if not isinstance(snap, dict):
+                        snap = {}
+                    if snap.get("exchange_order_id") != er.exchange_order_id:
+                        snap["exchange_order_id"] = er.exchange_order_id
+                        match.preview_snapshot_json = snap
+                        changed = True
+
+                if changed:
+                    db.add(match)
+                    updated += 1
+                    if before_status != match.status:
+                        transitions.append(
+                            {
+                                "order_id": match.id,
+                                "broker": match.broker_key,
+                                "broker_order_id": match.broker_order_id,
+                                "canonical_id": match.canonical_id,
+                                "correlation_id": getattr(
+                                    match, "correlation_id", None
+                                ),
+                                "from_status": before_status,
+                                "to_status": match.status,
+                            }
+                        )
+
+        if updated:
+            db.commit()
+        return updated, broker_errors, transitions
 
     def reconcile_internal_orders(
         self,
