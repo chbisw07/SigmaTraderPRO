@@ -16,6 +16,7 @@ import * as brokersApi from '@/lib/api/brokers'
 import { readiness } from '@/lib/api/health'
 import * as instrumentsApi from '@/lib/api/instruments'
 import * as ordersApi from '@/lib/api/orders'
+import * as queueApi from '@/lib/api/queue'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useOrderPrefsStore } from '@/store/orderPrefsStore'
@@ -35,6 +36,11 @@ import {
 type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  intentSubmit?: {
+    label: string
+    requirePreview?: boolean
+    onSubmit: (intent: ordersApi.ExecutionIntent) => Promise<void>
+  }
   launch:
     | {
         mode: 'manual'
@@ -63,7 +69,7 @@ type Props = {
 
 const EMPTY_STRIKES: number[] = []
 
-export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
+export function FnoOrderDialog({ open, onOpenChange, launch, intentSubmit }: Props) {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
   const updateLastUsedBroker = useAuthStore((s) => s.updateLastUsedBroker)
@@ -490,42 +496,90 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
     },
   })
 
+  const queueMutation = useMutation({
+    mutationFn: async () => {
+      if (!accessToken) throw new Error('Not authenticated')
+      if (!payload.execution_intent) throw new Error('Missing execution intent')
+      return queueApi.createQueueItem(accessToken, {
+        source_type: 'manual_ui',
+        source_ref: launch.mode === 'contract' ? 'contract' : 'manual',
+        execution_mode: 'manual_review',
+        execution_intent: payload.execution_intent,
+      })
+    },
+    onSuccess: (data) => {
+      setMessage({
+        tone: 'ok',
+        text: `Added to queue (#${data.id}).`,
+        correlationId: data.correlation_id,
+      })
+    },
+    onError: (err) => {
+      const msg =
+        typeof err === 'object' && err && 'message' in err
+          ? String((err as { message?: unknown }).message ?? 'Queue failed')
+          : 'Queue failed'
+      setMessage({ tone: 'error', text: msg })
+    },
+  })
+
   const createMutation = useMutation({
     mutationFn: async () => {
       if (!accessToken) throw new Error('Not authenticated')
-      return ordersApi.createFnoOrder(accessToken, payload)
+      if (!payload.execution_intent) throw new Error('Missing execution intent')
+      return queueApi.createQueueItem(accessToken, {
+        source_type: 'manual_ui',
+        source_ref: launch.mode === 'contract' ? 'contract' : 'manual',
+        execution_mode: 'auto_dispatch',
+        execution_intent: payload.execution_intent,
+      })
     },
     onSuccess: async (data) => {
-      const status = (data.status ?? '').toUpperCase()
-      if (status === 'BLOCKED') {
+      if (data.status === 'blocked') {
         setMessage({
           tone: 'blocked',
-          text: data.blocked_reason_message || 'Order blocked: dispatch not allowed in current system state.',
+          text: data.block_reason_message || data.block_reason_code || 'Order blocked: requires resolution or dispatch is not allowed.',
           correlationId: data.correlation_id,
         })
-      } else if (['DISPATCH_FAILED', 'FAILED', 'REJECTED'].includes(status)) {
+      } else if (data.status === 'failed') {
         setMessage({
           tone: 'error',
-          text:
-            data.failure_reason_message ||
-            (status === 'REJECTED'
-              ? 'Order dispatch failed: broker rejected the request.'
-              : 'Order dispatch failed.'),
+          text: data.block_reason_message || data.block_reason_code || 'Order dispatch failed.',
           correlationId: data.correlation_id,
         })
+      } else if (data.dispatched_order_id) {
+        const detail = await ordersApi.getOrder(accessToken!, data.dispatched_order_id)
+        const order = detail.order
+        const status = (order.status ?? '').toUpperCase()
+        if (status === 'BLOCKED') {
+          setMessage({
+            tone: 'blocked',
+            text: order.blocked_reason_message || 'Order blocked: dispatch not allowed in current system state.',
+            correlationId: order.correlation_id ?? data.correlation_id,
+          })
+        } else if (['DISPATCH_FAILED', 'FAILED', 'REJECTED'].includes(status)) {
+          setMessage({
+            tone: 'error',
+            text:
+              order.failure_reason_message ||
+              (status === 'REJECTED'
+                ? 'Order dispatch failed: broker rejected the request.'
+                : 'Order dispatch failed.'),
+            correlationId: order.correlation_id ?? data.correlation_id,
+          })
+        } else {
+          setMessage({
+            tone: 'ok',
+            text: `Order acknowledged by broker. Broker order id: ${order.broker_order_id ?? '—'}`,
+            correlationId: order.correlation_id ?? data.correlation_id,
+          })
+        }
       } else {
         setMessage({
           tone: 'ok',
-          text: `Order acknowledged by broker. Broker order id: ${data.broker_order_id ?? '—'}`,
+          text: `Order queued (#${data.id}).`,
           correlationId: data.correlation_id,
         })
-      }
-      setPreview(data.preview)
-      if (data.preview?.order_type === 'LIMIT' && data.preview.limit_price && data.preview.instrument?.canonical_id) {
-        setPremium(data.preview.instrument.canonical_id, data.preview.limit_price)
-      } else if (orderType === 'LIMIT' && selectionCanonicalId) {
-        const ref = limitPrice ?? hydratedPremium
-        if (ref != null) setPremium(selectionCanonicalId, ref)
       }
       await updateLastUsedBroker(broker)
     },
@@ -1343,20 +1397,51 @@ export function FnoOrderDialog({ open, onOpenChange, launch }: Props) {
           >
             {previewMutation.isPending ? 'Previewing…' : 'Preview'}
           </Button>
-          <Button
-            type="button"
-            onClick={() => void createMutation.mutateAsync()}
-            disabled={
-              !accessToken ||
-              !schemaOk ||
-              zerodhaMarketBlocked ||
-              !preview ||
-              planErrors.length > 0 ||
-              createMutation.isPending
-            }
-          >
-            {createMutation.isPending ? 'Placing…' : side === 'BUY' ? 'Place buy' : 'Place sell'}
-          </Button>
+          {intentSubmit ? (
+            <Button
+              type="button"
+              onClick={() => void intentSubmit.onSubmit(payload.execution_intent as ordersApi.ExecutionIntent)}
+              disabled={
+                !accessToken ||
+                zerodhaMarketBlocked ||
+                planErrors.length > 0 ||
+                Boolean(intentSubmit.requirePreview) && !preview
+              }
+            >
+              {intentSubmit.label}
+            </Button>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void queueMutation.mutateAsync()}
+                disabled={
+                  !accessToken ||
+                  zerodhaMarketBlocked ||
+                  planErrors.length > 0 ||
+                  queueMutation.isPending ||
+                  createMutation.isPending
+                }
+              >
+                {queueMutation.isPending ? 'Queueing…' : 'Add to queue'}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void createMutation.mutateAsync()}
+                disabled={
+                  !accessToken ||
+                  !schemaOk ||
+                  zerodhaMarketBlocked ||
+                  !preview ||
+                  planErrors.length > 0 ||
+                  createMutation.isPending
+                }
+              >
+                {createMutation.isPending ? 'Placing…' : side === 'BUY' ? 'Place buy' : 'Place sell'}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -18,6 +18,35 @@ type MockWatchlistItem = {
   display_symbol: string
 }
 
+type JsonObject = Record<string, unknown>
+type MockExecutionIntentEntry = {
+  broker?: string
+  canonical_id?: string
+  side?: 'BUY' | 'SELL'
+  quantity?: number
+  lots?: number | null
+  product?: string
+  order_type?: string
+  limit_price?: number | null
+}
+type MockExecutionIntent = JsonObject & {
+  entry?: MockExecutionIntentEntry
+  plan?: { managed_exits?: boolean }
+}
+type MockQueueCreateBody = {
+  source_type?: string
+  source_ref?: string | null
+  correlation_id?: string
+  idempotency_key?: string
+  execution_mode?: string
+  execution_intent?: MockExecutionIntent
+  notes?: string | null
+  expires_at?: string | null
+}
+type MockQueueUpdateBody = {
+  execution_intent?: MockExecutionIntent
+}
+
 type MockApiOverride = { status?: number; body: unknown }
 
 let mockWatchlists: MockWatchlist[] = [{ id: 1, name: 'Default', is_default: true }]
@@ -25,11 +54,45 @@ let mockWatchlistItems: MockWatchlistItem[] = []
 let nextWatchlistId = 2
 let nextWatchlistItemId = 1
 
+type MockQueueItem = {
+  id: number
+  created_at: string
+  updated_at: string
+  source_type: string
+  source_ref: string | null
+  correlation_id: string
+  idempotency_key: string
+  broker: string
+  canonical_id: string
+  instrument: JsonObject | null
+  side: 'BUY' | 'SELL'
+  quantity: number
+  lots: number | null
+  product: string
+  order_type: string
+  limit_price: number | null
+  managed_exits: boolean
+  execution_mode: string
+  status: string
+  validation_state: string
+  block_reason_code: string | null
+  block_reason_message: string | null
+  dispatched_order_id: number | null
+  notes: string | null
+  expires_at: string | null
+  execution_intent: MockExecutionIntent | undefined
+}
+
+let mockQueueItems: MockQueueItem[] = []
+let nextQueueId = 1
+
 function resetWatchlists() {
   mockWatchlists = [{ id: 1, name: 'Default', is_default: true }]
   mockWatchlistItems = []
   nextWatchlistId = 2
   nextWatchlistItemId = 1
+  mockQueueItems = []
+  nextQueueId = 1
 }
 
 beforeAll(() => {
@@ -81,6 +144,95 @@ beforeAll(() => {
         last_used_broker: lastUsedBroker,
         include_broker_orders: includeBrokerOrders ?? true,
       })
+    }
+
+    if (path === '/api/v1/queue' && init?.method === 'GET') {
+      return jsonResponse({ items: mockQueueItems, meta: {} })
+    }
+
+    if (path === '/api/v1/queue' && init?.method === 'POST') {
+      const override = (globalThis as unknown as { __mockApiOverrides?: { queueCreate?: MockApiOverride } }).__mockApiOverrides
+        ?.queueCreate
+      if (override) return jsonResponse(override.body, override.status ?? 200)
+      const body = typeof init.body === 'string' ? (JSON.parse(init.body) as MockQueueCreateBody) : ({} as MockQueueCreateBody)
+      const intent = body.execution_intent
+      const now = new Date().toISOString()
+      const item: MockQueueItem = {
+        id: nextQueueId++,
+        created_at: now,
+        updated_at: now,
+        source_type: body.source_type ?? 'manual_ui',
+        source_ref: body.source_ref ?? null,
+        correlation_id: body.correlation_id ?? 'corr_test',
+        idempotency_key: body.idempotency_key ?? `idem_${Math.random()}`,
+        broker: intent?.entry?.broker ?? 'angel',
+        canonical_id: intent?.entry?.canonical_id ?? 'NSE_EQ:EQUITY:EQUITY:INFY',
+        instrument: null,
+        side: intent?.entry?.side ?? 'BUY',
+        quantity: intent?.entry?.quantity ?? 1,
+        lots: intent?.entry?.lots ?? null,
+        product: intent?.entry?.product ?? 'CNC',
+        order_type: intent?.entry?.order_type ?? 'LIMIT',
+        limit_price: intent?.entry?.limit_price ?? null,
+        managed_exits: Boolean(intent?.plan?.managed_exits ?? false),
+        execution_mode: body.execution_mode ?? 'manual_review',
+        status: 'ready',
+        validation_state: 'valid',
+        block_reason_code: null,
+        block_reason_message: null,
+        dispatched_order_id: null,
+        notes: body.notes ?? null,
+        expires_at: body.expires_at ?? null,
+        execution_intent: intent,
+      }
+      mockQueueItems.unshift(item)
+      return jsonResponse(item)
+    }
+
+    const queueUpdateMatch = path.match(/^\/api\/v1\/queue\/(\d+)$/)
+    if (queueUpdateMatch && init?.method === 'PATCH') {
+      const id = Number(queueUpdateMatch[1])
+      const body = typeof init.body === 'string' ? (JSON.parse(init.body) as MockQueueUpdateBody) : ({} as MockQueueUpdateBody)
+      const item = mockQueueItems.find((x) => x.id === id)
+      if (!item) return jsonResponse({ detail: 'not found' }, 404)
+      if (body.execution_intent) {
+        item.execution_intent = body.execution_intent
+        const entry = body.execution_intent.entry
+        if (entry) {
+          item.broker = entry.broker ?? item.broker
+          item.canonical_id = entry.canonical_id ?? item.canonical_id
+          item.side = entry.side ?? item.side
+          item.quantity = entry.quantity ?? item.quantity
+          item.lots = entry.lots ?? null
+          item.product = entry.product ?? item.product
+          item.order_type = entry.order_type ?? item.order_type
+          item.limit_price = entry.limit_price ?? null
+        }
+        item.managed_exits = Boolean(body.execution_intent.plan?.managed_exits ?? false)
+      }
+      item.updated_at = new Date().toISOString()
+      return jsonResponse(item)
+    }
+
+    const queueExecMatch = path.match(/^\/api\/v1\/queue\/(\d+)\/execute$/)
+    if (queueExecMatch && init?.method === 'POST') {
+      const id = Number(queueExecMatch[1])
+      const item = mockQueueItems.find((x) => x.id === id)
+      if (!item) return jsonResponse({ detail: 'not found' }, 404)
+      item.status = 'dispatched'
+      item.dispatched_order_id = 123
+      item.updated_at = new Date().toISOString()
+      return jsonResponse(item)
+    }
+
+    const queueCancelMatch = path.match(/^\/api\/v1\/queue\/(\d+)\/cancel$/)
+    if (queueCancelMatch && init?.method === 'POST') {
+      const id = Number(queueCancelMatch[1])
+      const item = mockQueueItems.find((x) => x.id === id)
+      if (!item) return jsonResponse({ detail: 'not found' }, 404)
+      item.status = 'cancelled'
+      item.updated_at = new Date().toISOString()
+      return jsonResponse(item)
     }
 
     if (path === '/api/v1/auth/login') {

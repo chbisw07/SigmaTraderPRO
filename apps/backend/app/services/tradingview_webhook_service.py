@@ -191,6 +191,32 @@ def normalize_payload(
             reason_message="product must be CNC, MIS, or NRML",
         )
 
+    instrument_type = _upper(payload.get("instrument_type") or payload.get("segment"))
+    if instrument_type:
+        aliases = {"EQ": "EQUITY", "FUT": "FUTURE", "OPT": "OPTION"}
+        instrument_type = aliases.get(instrument_type, instrument_type)
+        if instrument_type not in {"EQUITY", "OPTION", "FUTURE"}:
+            return TradingViewNormalizationResult(
+                normalized=None,
+                reason_code=TradingViewWebhookReasonCode.WEBHOOK_INVALID_PAYLOAD,
+                reason_message="instrument_type must be EQUITY, OPTION, or FUTURE",
+            )
+
+    underlying = _upper(
+        payload.get("underlying") or payload.get("root") or payload.get("base")
+    )
+    expiry = _norm_str(payload.get("expiry"))
+    strike = _as_float(payload.get("strike"))
+    option_type = _upper(payload.get("option_type") or payload.get("opt_type"))
+    if option_type and option_type not in {"CE", "PE"}:
+        return TradingViewNormalizationResult(
+            normalized=None,
+            reason_code=TradingViewWebhookReasonCode.WEBHOOK_INVALID_PAYLOAD,
+            reason_message="option_type must be CE or PE",
+        )
+    lots = _as_int(payload.get("lots"))
+    lot_size = _as_int(payload.get("lot_size") or payload.get("lotsize"))
+
     qty = _as_int(payload.get("qty") or payload.get("quantity"))
     amount = _as_float(payload.get("amount"))
     price = _as_float(payload.get("price"))
@@ -206,9 +232,13 @@ def normalize_payload(
         ),
         symbol=symbol,
         exchange=exchange,
-        instrument_type=_upper(
-            payload.get("instrument_type") or payload.get("segment")
-        ),
+        instrument_type=instrument_type,
+        underlying=underlying,
+        expiry=expiry,
+        strike=strike,
+        option_type=option_type,
+        lots=lots,
+        lot_size=lot_size,
         action=action,
         side=side,
         order_type=order_type,

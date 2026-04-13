@@ -107,6 +107,137 @@ test('system events page renders', async () => {
   expect(await screen.findByText(/Order dispatch blocked/i)).toBeInTheDocument()
 })
 
+test('queue page renders', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: 'angel',
+      include_broker_orders: true,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/queue')
+  expect(await screen.findByRole('heading', { name: 'Queue' })).toBeInTheDocument()
+  expect(await screen.findByText(/No queue items yet/i)).toBeInTheDocument()
+})
+
+test('queue page execute/cancel actions update rows', async () => {
+  useAuthStore.setState({
+    status: 'authenticated',
+    accessToken: 'ACCESS_TOKEN',
+    refreshToken: 'REFRESH_TOKEN',
+    user: {
+      id: 1,
+      email: 'dev@example.com',
+      is_active: true,
+      last_used_broker: 'angel',
+      include_broker_orders: true,
+    },
+    isRefreshing: false,
+    error: null,
+    revision: 0,
+  })
+
+  renderAt('/queue')
+  expect(await screen.findByRole('heading', { name: 'Queue' })).toBeInTheDocument()
+  expect(await screen.findByText(/No queue items yet/i)).toBeInTheDocument()
+
+  await fetch('/api/v1/queue', {
+    method: 'POST',
+    body: JSON.stringify({
+      source_type: 'manual_ui',
+      execution_mode: 'manual_review',
+      execution_intent: {
+        version: '1',
+        entry: {
+          broker: 'angel',
+          canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+          side: 'BUY',
+          product_mode: 'delivery',
+          product: 'CNC',
+          order_type: 'LIMIT',
+          limit_price: 100,
+          quantity: 1,
+          lots: null,
+          lot_size: 1,
+        },
+        plan: {
+          managed_exits: false,
+          reference_price: 100,
+          reference_source: 'limit_price',
+          stop_loss: { price: null, pct: null },
+          target: { price: null, pct: null },
+          trailing_sl: { enabled: false, distance: { price: null, pct: null } },
+        },
+        source_context: 'manual',
+      },
+    }),
+  })
+
+  const refreshBtn = screen.getByRole('button', { name: /refresh/i })
+  fireEvent.click(refreshBtn)
+  expect(await screen.findByText('manual_ui')).toBeInTheDocument()
+  expect((await screen.findAllByText(/INFY/)).length).toBeGreaterThan(0)
+  const table = await screen.findByRole('table')
+
+  const cancelBtn = within(table).getByRole('button', { name: 'Cancel' })
+  fireEvent.click(cancelBtn)
+
+  await waitFor(() => {
+    expect(within(table).getByText('cancelled')).toBeInTheDocument()
+  })
+
+  await fetch('/api/v1/queue', {
+    method: 'POST',
+    body: JSON.stringify({
+      source_type: 'manual_ui',
+      execution_mode: 'manual_review',
+      execution_intent: {
+        version: '1',
+        entry: {
+          broker: 'angel',
+          canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
+          side: 'BUY',
+          product_mode: 'delivery',
+          product: 'CNC',
+          order_type: 'LIMIT',
+          limit_price: 100,
+          quantity: 1,
+          lots: null,
+          lot_size: 1,
+        },
+        plan: {
+          managed_exits: false,
+          reference_price: 100,
+          reference_source: 'limit_price',
+          stop_loss: { price: null, pct: null },
+          target: { price: null, pct: null },
+          trailing_sl: { enabled: false, distance: { price: null, pct: null } },
+        },
+        source_context: 'manual',
+      },
+    }),
+  })
+
+  fireEvent.click(screen.getByRole('button', { name: /refresh/i }))
+  const readyCell = await screen.findByText('ready')
+  const readyRow = readyCell.closest('tr')
+  if (!readyRow) throw new Error('Ready row not found')
+  fireEvent.click(within(readyRow).getByRole('button', { name: 'Execute' }))
+
+  await waitFor(() => {
+    expect(within(table).getByText('dispatched')).toBeInTheDocument()
+  })
+})
+
 test('holdings page renders', async () => {
   useAuthStore.setState({
     status: 'authenticated',

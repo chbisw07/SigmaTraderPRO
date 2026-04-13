@@ -29,6 +29,8 @@ def test_alembic_upgrade_head_sqlite(tmp_path: Path) -> None:
     assert "positions" in insp.get_table_names()
     assert "system_events" in insp.get_table_names()
     assert "webhook_ingestions" in insp.get_table_names()
+    assert "ingestion_queue_items" in insp.get_table_names()
+    assert "webhook_routes" in insp.get_table_names()
     assert "watchlists" in insp.get_table_names()
     assert "watchlist_items" in insp.get_table_names()
     engine.dispose()

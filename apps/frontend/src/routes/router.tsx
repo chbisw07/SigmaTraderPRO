@@ -7,6 +7,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { HoldingsPage } from '@/pages/HoldingsPage'
 import { OrdersPage } from '@/pages/OrdersPage'
 import { PositionsPage } from '@/pages/PositionsPage'
+import { QueuePage } from '@/pages/QueuePage'
 import { SearchPage } from '@/pages/SearchPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StrategiesPage } from '@/pages/StrategiesPage'
@@ -33,6 +34,7 @@ export const routeConfig: RouteObject[] = [
           { path: 'positions', element: <PositionsPage /> },
           { path: 'holdings', element: <HoldingsPage /> },
           { path: 'orders', element: <OrdersPage /> },
+          { path: 'queue', element: <QueuePage /> },
           { path: 'brokers', element: <BrokersPage /> },
           { path: 'system-events', element: <SystemEventsPage /> },
           { path: 'settings', element: <SettingsPage /> },

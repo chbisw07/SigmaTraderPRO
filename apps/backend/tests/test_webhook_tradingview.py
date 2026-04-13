@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.models.ingestion_queue_item  # noqa: F401
+import app.models.instrument  # noqa: F401
+import app.models.instrument_mapping  # noqa: F401
+import app.models.order  # noqa: F401
 import app.models.system_event  # noqa: F401
 import app.models.user  # noqa: F401
 import app.models.webhook_ingestion  # noqa: F401
+import app.models.webhook_route  # noqa: F401
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.main import app
 from app.models.base import Base
+from app.models.ingestion_queue_item import IngestionQueueItem
 from app.models.system_event import SystemEvent
 from app.models.user import User
 from app.models.webhook_ingestion import WebhookIngestion
@@ -63,7 +67,6 @@ def _create_user(db: Session) -> None:
         email="u@example.com",
         password_hash=hash_password("pass123"),
         is_active=True,
-        last_login_at=datetime.now(tz=UTC),
     )
     db.add(user)
     db.commit()
@@ -90,6 +93,7 @@ def _payload(**overrides):
 
 
 def test_valid_webhook_accepted_and_persisted(db_session: Session, client: TestClient):
+    _create_user(db_session)
     resp = client.post("/webhook/tradingview", json=_payload())
     assert resp.status_code == 200
     data = resp.json()
@@ -97,6 +101,7 @@ def test_valid_webhook_accepted_and_persisted(db_session: Session, client: TestC
     assert data["status"] == "accepted"
     assert data["correlation_id"]
     assert data["idempotency_key"]
+    assert data["queue_item_id"]
 
     rows = db_session.query(WebhookIngestion).all()
     assert len(rows) == 1
@@ -120,6 +125,11 @@ def test_valid_webhook_accepted_and_persisted(db_session: Session, client: TestC
     messages = {e.message for e in events}
     assert "TradingView webhook received" in messages
     assert "TradingView webhook accepted" in messages
+    assert "TradingView webhook enqueued" in messages
+
+    q = db_session.query(IngestionQueueItem).one()
+    assert q.source_type == "tradingview"
+    assert q.idempotency_key == data["idempotency_key"]
 
 
 def test_missing_token_rejected(db_session: Session, client: TestClient):
@@ -164,6 +174,7 @@ def test_schema_unsupported_rejected(db_session: Session, client: TestClient):
 
 
 def test_duplicate_webhook_ignored(db_session: Session, client: TestClient):
+    _create_user(db_session)
     resp1 = client.post("/webhook/tradingview", json=_payload(alert_id="DUP1"))
     assert resp1.status_code == 200
     corr1 = resp1.json()["correlation_id"]
@@ -196,6 +207,7 @@ def test_malformed_json_rejected(db_session: Session, client: TestClient):
 def test_normalizes_alternate_field_names_and_case(
     db_session: Session, client: TestClient
 ):
+    _create_user(db_session)
     p = _payload(
         alert_id="ALT1",
         symbol="infy",
@@ -221,6 +233,7 @@ def test_normalizes_alternate_field_names_and_case(
 
 
 def test_rejects_invalid_enums(db_session: Session, client: TestClient):
+    _create_user(db_session)
     resp = client.post("/webhook/tradingview", json=_payload(product="NOPE"))
     assert resp.status_code == 400
     data = resp.json()

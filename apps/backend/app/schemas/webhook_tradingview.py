@@ -12,6 +12,7 @@ class TradingViewWebhookResponse(BaseModel):
     idempotency_key: str | None = None
     duplicate_ignored: bool = False
     ingestion_id: int | None = None
+    queue_item_id: int | None = None
 
 
 class TradingViewNormalizedPayload(BaseModel):
@@ -25,6 +26,12 @@ class TradingViewNormalizedPayload(BaseModel):
     symbol: str
     exchange: str | None = None
     instrument_type: str | None = None
+    underlying: str | None = None
+    expiry: str | None = None
+    strike: float | None = Field(default=None, ge=0)
+    option_type: str | None = None
+    lots: int | None = Field(default=None, ge=1)
+    lot_size: int | None = Field(default=None, ge=1)
 
     action: str
     side: str | None = None

@@ -187,6 +187,7 @@ async def tradingview(request: Request, db: Session = Depends(get_db)) -> JSONRe
                 "duplicate_ignored": getattr(resp, "duplicate_ignored", False),
                 "idempotency_key": resp.idempotency_key,
                 "ingestion_id": resp.ingestion_id,
+                "queue_item_id": getattr(resp, "queue_item_id", None),
                 "http_status": result.http_status,
             },
         )

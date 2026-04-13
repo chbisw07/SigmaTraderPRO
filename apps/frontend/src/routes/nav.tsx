@@ -6,6 +6,7 @@ export type NavItem = {
 // Top-header navigation (Watchlist is a persistent left workspace, not a page tab).
 export const NAV_ITEMS: NavItem[] = [
   { to: '/brokers', label: 'Brokers' },
+  { to: '/queue', label: 'Queue' },
   { to: '/orders', label: 'Orders' },
   { to: '/positions', label: 'Positions' },
   { to: '/holdings', label: 'Holdings' },
