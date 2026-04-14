@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger, log_event
+from app.core.sanitization import redact_secrets_in_text
 from app.db.session import get_db
 from app.schemas.webhook_tradingview import TradingViewWebhookResponse
 from app.services.system_events_service import SystemEventLevel, system_events_service
@@ -81,7 +82,7 @@ async def tradingview(request: Request, db: Session = Depends(get_db)) -> JSONRe
         row = webhook_ingestion_service.persist_invalid_tradingview(
             db,
             correlation_id=correlation_id,
-            raw_text=raw_text[:50_000],
+            raw_text=redact_secrets_in_text(raw_text[:50_000]),
             reason_code="WEBHOOK_INVALID_PAYLOAD",
             reason_message="Invalid JSON payload",
         )

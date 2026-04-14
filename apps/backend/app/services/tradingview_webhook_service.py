@@ -16,10 +16,12 @@ class TradingViewWebhookReasonCode:
     WEBHOOK_SCHEMA_VERSION_UNSUPPORTED = "WEBHOOK_SCHEMA_VERSION_UNSUPPORTED"
     WEBHOOK_DUPLICATE = "WEBHOOK_DUPLICATE"
     WEBHOOK_INVALID_PAYLOAD = "WEBHOOK_INVALID_PAYLOAD"
+    QUEUE_ADMISSION_FAILED = "QUEUE_ADMISSION_FAILED"
 
 
 class TradingViewWebhookStatus:
     ACCEPTED = "accepted"
+    ACCEPTED_NOT_ENQUEUED = "accepted_not_enqueued"
     REJECTED = "rejected"
     DUPLICATE_IGNORED = "duplicate_ignored"
 
@@ -46,6 +48,15 @@ def _as_float(value: Any) -> float | None:
     if f < 0:
         return None
     return f
+
+
+def _as_signed_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _as_int(value: Any) -> int | None:
@@ -221,6 +232,24 @@ def normalize_payload(
     amount = _as_float(payload.get("amount"))
     price = _as_float(payload.get("price"))
 
+    sl = _as_float(payload.get("sl_price") or payload.get("stop_loss"))
+    sl_pct = _as_signed_float(payload.get("sl_pct") or payload.get("stop_loss_pct"))
+    tp = _as_float(payload.get("tp_price") or payload.get("target"))
+    tp_pct = _as_signed_float(payload.get("tp_pct") or payload.get("target_pct"))
+    trail = _as_float(payload.get("trail_price") or payload.get("trailing_sl"))
+    trail_pct = _as_signed_float(
+        payload.get("trail_pct") or payload.get("trailing_sl_pct")
+    )
+    managed_exits = payload.get("managed_exits")
+    if isinstance(managed_exits, str):
+        managed_exits = managed_exits.strip().lower() in {"1", "true", "yes", "y"}
+    if not isinstance(managed_exits, bool):
+        managed_exits = None
+
+    strategy_params = payload.get("strategy_params") or payload.get("strategyParams")
+    if not isinstance(strategy_params, dict):
+        strategy_params = None
+
     normalized = TradingViewNormalizedPayload(
         schema_version=schema_version,
         idempotency_key=idempotency_key,
@@ -230,6 +259,7 @@ def normalize_payload(
             or payload.get("strategyName")
             or payload.get("strategy")
         ),
+        strategy_params_json=strategy_params,
         symbol=symbol,
         exchange=exchange,
         instrument_type=instrument_type,
@@ -246,6 +276,13 @@ def normalize_payload(
         quantity=qty,
         amount=amount,
         price=price,
+        stop_loss=sl,
+        stop_loss_pct=sl_pct,
+        target=tp,
+        target_pct=tp_pct,
+        trailing_sl=trail,
+        trailing_sl_pct=trail_pct,
+        managed_exits=managed_exits,
         timeframe=_norm_str(payload.get("timeframe") or payload.get("tf")),
         alert_timestamp=_norm_str(
             payload.get("alert_timestamp")
@@ -253,14 +290,6 @@ def normalize_payload(
             or payload.get("time")
         ),
     )
-
-    # Minimal sanity: require either qty or amount for trade actions.
-    if normalized.quantity is None and normalized.amount is None:
-        return TradingViewNormalizationResult(
-            normalized=None,
-            reason_code=TradingViewWebhookReasonCode.WEBHOOK_INVALID_PAYLOAD,
-            reason_message="qty/quantity or amount is required",
-        )
 
     return TradingViewNormalizationResult(
         normalized=normalized, reason_code=None, reason_message=None

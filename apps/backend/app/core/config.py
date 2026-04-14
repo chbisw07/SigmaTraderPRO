@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     tradingview_route_token: str | None = Field(
         default=None, validation_alias="TRADINGVIEW_ROUTE_TOKEN"
     )
+    tradingview_env_token_fallback_enabled: bool = Field(
+        default=False, validation_alias="TRADINGVIEW_ENV_TOKEN_FALLBACK_ENABLED"
+    )
     tradingview_supported_schema_versions: str = Field(
         default="1", validation_alias="TRADINGVIEW_SUPPORTED_SCHEMA_VERSIONS"
     )

@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -59,6 +60,21 @@ class IngestionQueueItem(Base):
         String(16), nullable=False, default="resolved", index=True
     )
     resolution_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    source_route_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+    source_policy_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    strategy_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    strategy_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    strategy_params_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    signal_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    timeframe: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    signal_timestamp: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     dispatched_order_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("orders.id"), nullable=True, index=True

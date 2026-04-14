@@ -22,6 +22,7 @@ class TradingViewNormalizedPayload(BaseModel):
 
     strategy_id: str | None = None
     strategy_name: str | None = None
+    strategy_params_json: dict | None = None
 
     symbol: str
     exchange: str | None = None
@@ -41,6 +42,13 @@ class TradingViewNormalizedPayload(BaseModel):
     quantity: int | None = Field(default=None, ge=1)
     amount: float | None = Field(default=None, ge=0)
     price: float | None = Field(default=None, ge=0)
+    stop_loss: float | None = None
+    stop_loss_pct: float | None = None
+    target: float | None = None
+    target_pct: float | None = None
+    trailing_sl: float | None = None
+    trailing_sl_pct: float | None = None
+    managed_exits: bool | None = None
 
     timeframe: str | None = None
     alert_timestamp: str | None = None

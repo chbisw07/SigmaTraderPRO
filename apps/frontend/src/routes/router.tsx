@@ -12,6 +12,7 @@ import { SearchPage } from '@/pages/SearchPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StrategiesPage } from '@/pages/StrategiesPage'
 import { SystemEventsPage } from '@/pages/SystemEventsPage'
+import { TradingViewSettingsPage } from '@/pages/TradingViewSettingsPage'
 import { RequireAuth } from '@/routes/RequireAuth'
 import { RootLayout } from '@/routes/RootLayout'
 
@@ -38,6 +39,7 @@ export const routeConfig: RouteObject[] = [
           { path: 'brokers', element: <BrokersPage /> },
           { path: 'system-events', element: <SystemEventsPage /> },
           { path: 'settings', element: <SettingsPage /> },
+          { path: 'settings/tradingview', element: <TradingViewSettingsPage /> },
         ],
       },
     ],

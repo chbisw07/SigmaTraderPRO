@@ -388,6 +388,8 @@ def _compute_resolution(
     default_broker_key: str | None = None,
     default_product: str | None = None,
     default_order_type: str | None = None,
+    policy: dict | None = None,
+    metadata: dict | None = None,
 ) -> QueueResolution:
     intent_json = _ensure_intent_shape(intent_json)
     entry = intent_json["entry"]
@@ -396,6 +398,8 @@ def _compute_resolution(
     unresolved: list[str] = []
     defaulted: list[str] = []
     invalid: list[str] = []
+    policy = policy if isinstance(policy, dict) else {}
+    metadata = metadata if isinstance(metadata, dict) else {}
 
     side = _coerce_side(entry.get("side"))
     if not side:
@@ -434,6 +438,25 @@ def _compute_resolution(
             entry["product"] = product
             defaulted.append("entry.product")
     if not product:
+        pm_default = str(policy.get("product_mode_default") or "").strip()
+        # Conservative mapping: translate product_mode default into broker product.
+        if pm_default:
+            if pm_default == ProductMode.delivery.value:
+                entry["product_mode"] = ProductMode.delivery.value
+                entry["product"] = "CNC"
+                product = "CNC"
+                defaulted.extend(["entry.product_mode", "entry.product"])
+            elif pm_default == ProductMode.intraday.value:
+                entry["product_mode"] = ProductMode.intraday.value
+                entry["product"] = "MIS"
+                product = "MIS"
+                defaulted.extend(["entry.product_mode", "entry.product"])
+            elif pm_default == ProductMode.carry_forward.value:
+                entry["product_mode"] = ProductMode.carry_forward.value
+                entry["product"] = "NRML"
+                product = "NRML"
+                defaulted.extend(["entry.product_mode", "entry.product"])
+    if not product:
         unresolved.append("entry.product")
 
     product_mode = str(entry.get("product_mode") or "").strip()
@@ -468,6 +491,50 @@ def _compute_resolution(
         entry["quantity"] = int(lots) * int(lot_size)
         qty = entry["quantity"]
         defaulted.append("entry.quantity")
+
+    # Route/app sizing policy support (baseline).
+    # - `fixed_quantity`: sets broker-facing quantity directly.
+    # - `fixed_amount`: stores amount and attempts quantity derivation from
+    #   signal/reference price (blocks if price missing).
+    if qty is None:
+        sizing_mode = str(policy.get("sizing_mode") or "").strip()
+        if sizing_mode == "fixed_quantity":
+            fixed_qty = _coerce_int(policy.get("fixed_quantity"))
+            if fixed_qty is not None:
+                entry["quantity"] = int(fixed_qty)
+                qty = entry["quantity"]
+                defaulted.append("entry.quantity")
+                if lot_size and qty % lot_size == 0:
+                    entry["lots"] = int(qty // lot_size)
+                    defaulted.append("entry.lots")
+        elif sizing_mode == "fixed_amount":
+            fixed_amount = _coerce_float(policy.get("fixed_amount"))
+            if fixed_amount is not None:
+                entry["amount"] = float(fixed_amount)
+                defaulted.append("entry.amount")
+
+    if qty is None:
+        # Amount → quantity derivation (used by payload or route policy).
+        amount = _coerce_float(entry.get("amount"))
+        if amount is not None and amount > 0:
+            ref_price = None
+            if order_type == "LIMIT" and limit_price is not None and limit_price > 0:
+                ref_price = float(limit_price)
+            if ref_price is None:
+                ref_price = _coerce_float(
+                    metadata.get("signal_price") or metadata.get("price")
+                )
+            if ref_price is not None and ref_price > 0:
+                derived = int(float(amount) // float(ref_price))
+                if lot_size:
+                    derived = int(derived // int(lot_size)) * int(lot_size)
+                if derived >= 1:
+                    entry["quantity"] = int(derived)
+                    qty = entry["quantity"]
+                    defaulted.append("entry.quantity")
+                    if lot_size:
+                        entry["lots"] = int(qty // int(lot_size))
+                        defaulted.append("entry.lots")
     if qty is None:
         unresolved.append("entry.quantity")
     else:
@@ -600,6 +667,15 @@ class IngestionQueueService:
         default_broker_key: str | None = None,
         default_product: str | None = None,
         default_order_type: str | None = None,
+        source_route_id: int | None = None,
+        source_policy_json: dict | None = None,
+        source_metadata_json: dict | None = None,
+        strategy_id: str | None = None,
+        strategy_name: str | None = None,
+        strategy_params_json: dict | None = None,
+        signal_price: float | None = None,
+        timeframe: str | None = None,
+        signal_timestamp: str | None = None,
     ) -> IngestionQueueItem:
         corr = correlation_id or str(uuid4())
         idem = idempotency_key or str(uuid4())
@@ -611,6 +687,8 @@ class IngestionQueueService:
             default_broker_key=default_broker_key,
             default_product=default_product,
             default_order_type=default_order_type,
+            policy=source_policy_json,
+            metadata=source_metadata_json,
         )
 
         status: QueueStatus = (
@@ -653,6 +731,15 @@ class IngestionQueueService:
                 "invalid_fields": resolution.invalid_fields,
                 "instrument_hint": resolution.instrument_hint,
             },
+            source_route_id=source_route_id,
+            source_policy_json=source_policy_json,
+            source_metadata_json=source_metadata_json,
+            strategy_id=strategy_id,
+            strategy_name=strategy_name,
+            strategy_params_json=strategy_params_json,
+            signal_price=signal_price,
+            timeframe=timeframe,
+            signal_timestamp=signal_timestamp,
             dispatched_order_id=None,
             notes=notes,
             expires_at=expires_at,
@@ -783,7 +870,11 @@ class IngestionQueueService:
         if intent_json is not None:
             source = QueueSourceType(item.source_type)
             resolution = _compute_resolution(
-                db, intent_json=intent_json, source_type=source
+                db,
+                intent_json=intent_json,
+                source_type=source,
+                policy=item.source_policy_json,
+                metadata=item.source_metadata_json,
             )
             item.execution_intent_json = resolution.intent_json
             item.broker_key = (
@@ -926,7 +1017,11 @@ class IngestionQueueService:
 
         source = QueueSourceType(item.source_type)
         resolution = _compute_resolution(
-            db, intent_json=item.execution_intent_json, source_type=source
+            db,
+            intent_json=item.execution_intent_json,
+            source_type=source,
+            policy=item.source_policy_json,
+            metadata=item.source_metadata_json,
         )
         item.execution_intent_json = resolution.intent_json
         item.broker_key = (

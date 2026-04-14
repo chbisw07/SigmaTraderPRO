@@ -315,6 +315,7 @@ export function QueuePage() {
               <tr className="border-b">
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Time</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Source</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Strategy</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Broker</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Symbol</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Side</th>
@@ -339,6 +340,18 @@ export function QueuePage() {
                     <td className="px-3 py-2 text-xs text-muted-foreground">{new Date(item.created_at).toLocaleString()}</td>
                     <td className="px-3 py-2">
                       <Badge variant="outline">{item.source_type}</Badge>
+                    </td>
+                    <td className="px-3 py-2">
+                      {item.strategy_name ? (
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-medium">{item.strategy_name}</div>
+                          {item.signal_price != null ? (
+                            <div className="text-[11px] text-muted-foreground">signal: {item.signal_price}</div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-xs">{String(item.broker)}</td>
                     <td className="px-3 py-2">

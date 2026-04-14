@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -35,6 +35,8 @@ class WebhookRoute(Base):
     )
     default_product: Mapped[str | None] = mapped_column(String(16), nullable=True)
     default_order_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    policy_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 

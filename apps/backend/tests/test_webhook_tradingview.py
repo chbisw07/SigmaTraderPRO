@@ -23,6 +23,7 @@ from app.models.ingestion_queue_item import IngestionQueueItem
 from app.models.system_event import SystemEvent
 from app.models.user import User
 from app.models.webhook_ingestion import WebhookIngestion
+from app.models.webhook_route import WebhookRoute
 
 
 @pytest.fixture()
@@ -51,6 +52,7 @@ def client(db_session: Session, tmp_path):
     settings.log_dir = tmp_path / "logs"
     settings.audit_csv_dir = tmp_path / "audit"
     settings.tradingview_route_token = "TV_TOKEN"
+    settings.tradingview_env_token_fallback_enabled = False
     settings.tradingview_supported_schema_versions = "1"
 
     def override_get_db():
@@ -69,6 +71,33 @@ def _create_user(db: Session) -> None:
         is_active=True,
     )
     db.add(user)
+    db.commit()
+
+
+def _create_tv_route(
+    db: Session,
+    *,
+    user_id: int,
+    token: str,
+    default_broker_key: str = "zerodha",
+    default_execution_mode: str = "manual_review",
+    default_product: str = "CNC",
+    default_order_type: str = "MARKET",
+    policy_json: dict | None = None,
+) -> None:
+    route = WebhookRoute(
+        user_id=user_id,
+        source="tradingview",
+        name="tv",
+        secret_hash=hash_password(token),
+        default_broker_key=default_broker_key,
+        default_execution_mode=default_execution_mode,
+        default_product=default_product,
+        default_order_type=default_order_type,
+        policy_json=policy_json,
+        is_enabled=True,
+    )
+    db.add(route)
     db.commit()
 
 
@@ -94,6 +123,8 @@ def _payload(**overrides):
 
 def test_valid_webhook_accepted_and_persisted(db_session: Session, client: TestClient):
     _create_user(db_session)
+    user = db_session.query(User).one()
+    _create_tv_route(db_session, user_id=user.id, token="TV_TOKEN")
     resp = client.post("/webhook/tradingview", json=_payload())
     assert resp.status_code == 200
     data = resp.json()
@@ -124,6 +155,7 @@ def test_valid_webhook_accepted_and_persisted(db_session: Session, client: TestC
     )
     messages = {e.message for e in events}
     assert "TradingView webhook received" in messages
+    assert "TradingView route resolved" in messages
     assert "TradingView webhook accepted" in messages
     assert "TradingView webhook enqueued" in messages
 
@@ -175,6 +207,8 @@ def test_schema_unsupported_rejected(db_session: Session, client: TestClient):
 
 def test_duplicate_webhook_ignored(db_session: Session, client: TestClient):
     _create_user(db_session)
+    user = db_session.query(User).one()
+    _create_tv_route(db_session, user_id=user.id, token="TV_TOKEN")
     resp1 = client.post("/webhook/tradingview", json=_payload(alert_id="DUP1"))
     assert resp1.status_code == 200
     corr1 = resp1.json()["correlation_id"]
@@ -204,10 +238,140 @@ def test_malformed_json_rejected(db_session: Session, client: TestClient):
     assert db_session.query(WebhookIngestion).count() == 1
 
 
+def test_invalid_json_with_route_token_is_safely_redacted_in_db(
+    db_session: Session, client: TestClient
+):
+    # This request body is invalid JSON but still contains a route_token-like field.
+    resp = client.post(
+        "/webhook/tradingview",
+        data='{"route_token":"TV_TOKEN","schema_version":"1",bad}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+    data = resp.json()
+    assert data["reason_code"] == "WEBHOOK_INVALID_PAYLOAD"
+
+    row = db_session.query(WebhookIngestion).one()
+    raw = row.raw_payload_json or {}
+    blob = str(raw.get("_raw") or "")
+    assert "TV_TOKEN" not in blob
+    assert "***REDACTED***" in blob
+
+
+def test_env_token_fallback_disabled_by_default(
+    db_session: Session, client: TestClient
+):
+    _create_user(db_session)
+    assert settings.tradingview_env_token_fallback_enabled is False
+    # No DB route exists. Token matches TRADINGVIEW_ROUTE_TOKEN but fallback is
+    # disabled.
+    resp = client.post(
+        "/webhook/tradingview",
+        json={
+            "route_token": "TV_TOKEN",
+            "schema_version": "1",
+            "alert_id": "E1",
+            "symbol": "NSE:INFY",
+            "order_action": "BUY",
+        },
+    )
+    assert resp.status_code == 403
+    data = resp.json()
+    assert data["reason_code"] == "WEBHOOK_TOKEN_INVALID"
+
+
+def test_env_token_fallback_enabled_allows_single_user_dev_mode(
+    db_session: Session, client: TestClient
+):
+    _create_user(db_session)
+    settings.tradingview_env_token_fallback_enabled = True
+    try:
+        resp = client.post(
+            "/webhook/tradingview",
+            json={
+                "route_token": "TV_TOKEN",
+                "schema_version": "1",
+                "alert_id": "E2",
+                "symbol": "NSE:INFY",
+                "order_action": "BUY",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["queue_item_id"]
+    finally:
+        settings.tradingview_env_token_fallback_enabled = False
+
+
+def test_queue_admission_failure_returns_explicit_non_success(
+    db_session: Session, client: TestClient, monkeypatch
+):
+    _create_user(db_session)
+    user = db_session.query(User).one()
+    _create_tv_route(db_session, user_id=user.id, token="TV_TOKEN")
+
+    from app.services.webhook_ingestion_service import ingestion_queue_service
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated queue failure")
+
+    monkeypatch.setattr(ingestion_queue_service, "create_item", boom)
+    resp = client.post("/webhook/tradingview", json=_payload(alert_id="QFAIL1"))
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["ok"] is False
+    assert data["status"] == "accepted_not_enqueued"
+    assert data["reason_code"] == "QUEUE_ADMISSION_FAILED"
+    assert data["queue_item_id"] is None
+    assert data["correlation_id"]
+
+    events = (
+        db_session.query(SystemEvent)
+        .filter(SystemEvent.category == "webhook_tradingview")
+        .all()
+    )
+    assert "TradingView route resolved" in {e.message for e in events}
+    assert any("failed to enqueue" in (e.message or "").lower() for e in events)
+
+
+def test_queue_admission_failure_retry_can_enqueue_on_duplicate(
+    db_session: Session, client: TestClient, monkeypatch
+):
+    _create_user(db_session)
+    user = db_session.query(User).one()
+    _create_tv_route(db_session, user_id=user.id, token="TV_TOKEN")
+
+    from app.services.webhook_ingestion_service import ingestion_queue_service
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated queue failure")
+
+    monkeypatch.setattr(ingestion_queue_service, "create_item", boom)
+    resp1 = client.post("/webhook/tradingview", json=_payload(alert_id="QFAIL2"))
+    assert resp1.status_code == 503
+    idem = resp1.json()["idempotency_key"]
+
+    # Restore queue admission; resend with the same idempotency key (same alert_id).
+    monkeypatch.undo()
+    resp2 = client.post("/webhook/tradingview", json=_payload(alert_id="QFAIL2"))
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["ok"] is True
+    assert data2["status"] == "accepted"
+    assert data2["idempotency_key"] == idem
+    assert data2["queue_item_id"]
+
+    assert db_session.query(WebhookIngestion).count() == 1
+    assert db_session.query(IngestionQueueItem).count() == 1
+
+
 def test_normalizes_alternate_field_names_and_case(
     db_session: Session, client: TestClient
 ):
     _create_user(db_session)
+    user = db_session.query(User).one()
+    _create_tv_route(db_session, user_id=user.id, token="TV_TOKEN")
     p = _payload(
         alert_id="ALT1",
         symbol="infy",
@@ -234,7 +398,82 @@ def test_normalizes_alternate_field_names_and_case(
 
 def test_rejects_invalid_enums(db_session: Session, client: TestClient):
     _create_user(db_session)
+    user = db_session.query(User).one()
+    _create_tv_route(db_session, user_id=user.id, token="TV_TOKEN")
     resp = client.post("/webhook/tradingview", json=_payload(product="NOPE"))
     assert resp.status_code == 400
     data = resp.json()
     assert data["reason_code"] == "WEBHOOK_INVALID_PAYLOAD"
+
+
+def test_minimal_payload_uses_route_fixed_quantity(
+    db_session: Session, client: TestClient
+):
+    _create_user(db_session)
+    user = db_session.query(User).one()
+    _create_tv_route(
+        db_session,
+        user_id=user.id,
+        token="ROUTE_TOKEN_1",
+        policy_json={
+            "sizing_mode": "fixed_quantity",
+            "fixed_quantity": 2,
+        },
+    )
+
+    payload = {
+        "route_token": "ROUTE_TOKEN_1",
+        "schema_version": "1",
+        "alert_id": "MIN1",
+        "symbol": "NSE:INFY",
+        "order_action": "BUY",
+    }
+    resp = client.post("/webhook/tradingview", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["status"] == "accepted"
+
+    q = (
+        db_session.query(IngestionQueueItem)
+        .filter_by(idempotency_key=data["idempotency_key"])
+        .one()
+    )
+    entry = (q.execution_intent_json or {}).get("entry", {})
+    assert entry.get("quantity") == 2
+
+
+def test_fixed_amount_sizing_uses_signal_price(db_session: Session, client: TestClient):
+    _create_user(db_session)
+    user = db_session.query(User).one()
+    _create_tv_route(
+        db_session,
+        user_id=user.id,
+        token="ROUTE_TOKEN_2",
+        policy_json={
+            "sizing_mode": "fixed_amount",
+            "fixed_amount": 1000,
+        },
+    )
+
+    payload = {
+        "route_token": "ROUTE_TOKEN_2",
+        "schema_version": "1",
+        "alert_id": "MIN2",
+        "symbol": "NSE:INFY",
+        "order_action": "BUY",
+        "price": 100,
+    }
+    resp = client.post("/webhook/tradingview", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+
+    q = (
+        db_session.query(IngestionQueueItem)
+        .filter_by(idempotency_key=data["idempotency_key"])
+        .one()
+    )
+    entry = (q.execution_intent_json or {}).get("entry", {})
+    assert entry.get("amount") == 1000.0
+    assert entry.get("quantity") == 10

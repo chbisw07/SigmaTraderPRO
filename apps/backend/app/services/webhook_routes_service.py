@@ -21,10 +21,12 @@ class ResolvedWebhookRoute:
     user_id: int
     route_id: int | None
     source: str
+    name: str | None
     default_broker_key: str | None
     default_execution_mode: QueueExecutionMode
     default_product: str | None
     default_order_type: str | None
+    policy_json: dict | None
 
 
 class WebhookRoutesService:
@@ -38,6 +40,7 @@ class WebhookRoutesService:
         default_execution_mode: QueueExecutionMode,
         default_product: str | None,
         default_order_type: str | None,
+        policy_json: dict | None,
     ) -> tuple[WebhookRoute, str]:
         token = secrets.token_urlsafe(32)
         route = WebhookRoute(
@@ -49,6 +52,7 @@ class WebhookRoutesService:
             default_execution_mode=default_execution_mode.value,
             default_product=default_product,
             default_order_type=default_order_type,
+            policy_json=policy_json,
             is_enabled=True,
         )
         db.add(route)
@@ -78,6 +82,7 @@ class WebhookRoutesService:
         default_execution_mode: QueueExecutionMode | None,
         default_product: str | None,
         default_order_type: str | None,
+        policy_json: dict | None,
         is_enabled: bool | None,
     ) -> WebhookRoute:
         route = (
@@ -99,6 +104,8 @@ class WebhookRoutesService:
             route.default_product = default_product
         if default_order_type is not None:
             route.default_order_type = default_order_type
+        if policy_json is not None:
+            route.policy_json = policy_json
         if is_enabled is not None:
             route.is_enabled = bool(is_enabled)
 
@@ -126,18 +133,23 @@ class WebhookRoutesService:
                     user_id=route.user_id,
                     route_id=route.id,
                     source="tradingview",
+                    name=route.name,
                     default_broker_key=route.default_broker_key,
                     default_execution_mode=QueueExecutionMode(
                         route.default_execution_mode
                     ),
                     default_product=route.default_product,
                     default_order_type=route.default_order_type,
+                    policy_json=route.policy_json,
                 )
 
         # Legacy fallback: environment token (single-tenant/dev). If enabled, the
         # route resolves to the only active user.
         expected = getattr(settings, "tradingview_route_token", None)
-        if expected and token == expected:
+        fallback_enabled = bool(
+            getattr(settings, "tradingview_env_token_fallback_enabled", False)
+        )
+        if fallback_enabled and expected and token == expected:
             active_users = db.query(User).filter(User.is_active.is_(True)).all()
             if len(active_users) == 1:
                 u = active_users[0]
@@ -145,10 +157,12 @@ class WebhookRoutesService:
                     user_id=u.id,
                     route_id=None,
                     source="tradingview",
+                    name="env_token",
                     default_broker_key=getattr(u, "last_used_broker", None),
                     default_execution_mode=QueueExecutionMode.manual_review,
                     default_product=None,
                     default_order_type=None,
+                    policy_json=None,
                 )
 
         return None

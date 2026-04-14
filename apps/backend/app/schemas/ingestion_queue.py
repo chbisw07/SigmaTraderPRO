@@ -98,6 +98,14 @@ class IngestionQueueItemOut(BaseModel):
     resolution_state: str = "resolved"
     resolution: dict = Field(default_factory=dict)
 
+    source_route_id: int | None = None
+    strategy_id: str | None = None
+    strategy_name: str | None = None
+    strategy_params_json: dict | None = None
+    signal_price: float | None = None
+    timeframe: str | None = None
+    signal_timestamp: str | None = None
+
     dispatched_order_id: int | None = None
     notes: str | None = None
     expires_at: datetime | None = None

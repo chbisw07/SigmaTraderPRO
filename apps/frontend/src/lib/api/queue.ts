@@ -47,6 +47,14 @@ export type QueueItemOut = {
   resolution_state?: QueueResolutionState
   resolution?: Record<string, unknown>
 
+  source_route_id?: number | null
+  strategy_id?: string | null
+  strategy_name?: string | null
+  strategy_params_json?: Record<string, unknown> | null
+  signal_price?: number | null
+  timeframe?: string | null
+  signal_timestamp?: string | null
+
   dispatched_order_id: number | null
   notes: string | null
   expires_at: string | null
