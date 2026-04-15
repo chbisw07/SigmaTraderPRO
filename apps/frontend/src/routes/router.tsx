@@ -9,6 +9,7 @@ import { OrdersPage } from '@/pages/OrdersPage'
 import { PositionsPage } from '@/pages/PositionsPage'
 import { QueuePage } from '@/pages/QueuePage'
 import { SearchPage } from '@/pages/SearchPage'
+import { IntegrationsPage } from '@/pages/IntegrationsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StrategiesPage } from '@/pages/StrategiesPage'
 import { SystemEventsPage } from '@/pages/SystemEventsPage'
@@ -36,10 +37,27 @@ export const routeConfig: RouteObject[] = [
           { path: 'holdings', element: <HoldingsPage /> },
           { path: 'orders', element: <OrdersPage /> },
           { path: 'queue', element: <QueuePage /> },
-          { path: 'brokers', element: <BrokersPage /> },
+          // Back-compat: Brokers now lives under Settings.
+          { path: 'brokers', element: <Navigate to="/settings/brokers" replace /> },
           { path: 'system-events', element: <SystemEventsPage /> },
-          { path: 'settings', element: <SettingsPage /> },
-          { path: 'settings/tradingview', element: <TradingViewSettingsPage /> },
+          {
+            path: 'settings',
+            element: <SettingsPage />,
+            children: [
+              { index: true, element: <Navigate to="/settings/brokers" replace /> },
+              { path: 'brokers', element: <BrokersPage /> },
+              {
+                path: 'integrations',
+                element: <IntegrationsPage />,
+                children: [
+                  { index: true, element: <Navigate to="/settings/integrations/tradingview" replace /> },
+                  { path: 'tradingview', element: <TradingViewSettingsPage /> },
+                ],
+              },
+            ],
+          },
+          // Back-compat: moved under /settings/integrations.
+          { path: 'settings/tradingview', element: <Navigate to="/settings/integrations/tradingview" replace /> },
         ],
       },
     ],

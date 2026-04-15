@@ -1,6 +1,6 @@
-import { Link } from 'react-router-dom'
+import { NavLink, Outlet } from 'react-router-dom'
 
-import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 export function SettingsPage() {
   return (
@@ -12,28 +12,35 @@ export function SettingsPage() {
         </p>
       </div>
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-semibold">Integrations</h2>
-          <p className="text-xs text-muted-foreground">
-            Operational integrations managed server-side.
-          </p>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2">
+        <div className="flex items-center gap-1 rounded-md border bg-background p-1">
+          <NavLink
+            to="/settings/brokers"
+            className={({ isActive }) =>
+              cn(
+                'inline-flex h-7 items-center rounded-md px-3 text-xs font-medium transition-colors',
+                isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+              )
+            }
+            end
+          >
+            Brokers
+          </NavLink>
+          <NavLink
+            to="/settings/integrations"
+            className={({ isActive }) =>
+              cn(
+                'inline-flex h-7 items-center rounded-md px-3 text-xs font-medium transition-colors',
+                isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+              )
+            }
+          >
+            Integrations
+          </NavLink>
         </div>
+      </div>
 
-        <div className="rounded-lg border bg-card p-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">TradingView</div>
-              <div className="text-xs text-muted-foreground">
-                Create route tokens and manage default execution policy for webhook signals.
-              </div>
-            </div>
-            <Button asChild type="button" variant="outline" size="sm">
-              <Link to="/settings/tradingview">Open</Link>
-            </Button>
-          </div>
-        </div>
-      </section>
+      <Outlet />
     </div>
   )
 }
