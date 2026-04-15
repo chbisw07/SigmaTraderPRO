@@ -69,12 +69,8 @@ export function SystemEventsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">System Events</h1>
-          <div className="text-sm text-muted-foreground">Recent backend events (alerts, orders, broker).</div>
-        </div>
-        <div className="flex items-center gap-2">
+      <h1 className="sr-only">System Events</h1>
+      <div className="flex flex-wrap items-center justify-end gap-2">
           <Input
             aria-label="Keep last (days)"
             className="w-[120px]"
@@ -97,7 +93,6 @@ export function SystemEventsPage() {
           <Button type="button" variant="outline" size="sm" onClick={() => void events.refetch()} disabled={!accessToken}>
             Refresh
           </Button>
-        </div>
       </div>
 
       <Card>

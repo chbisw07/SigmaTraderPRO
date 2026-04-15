@@ -238,22 +238,15 @@ export function QueuePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Queue</h1>
-          <p className="text-sm text-muted-foreground">
-            Execution-intent ingestion queue (manual review / auto dispatch).
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      <h1 className="sr-only">Queue</h1>
+
+      <div className="rounded-md border bg-card p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-medium">Filters</div>
           <Button type="button" variant="outline" size="sm" onClick={() => void queue.refetch()} disabled={queue.isFetching}>
             {queue.isFetching ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>
-      </div>
-
-      <div className="rounded-md border bg-card p-3">
-        <div className="text-sm font-medium">Filters</div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Input
             aria-label="Queue search"

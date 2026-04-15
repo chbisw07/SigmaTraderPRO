@@ -325,14 +325,8 @@ export function OrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Orders</h1>
-          <p className="text-sm text-muted-foreground">
-            Unified workspace over SigmaTraderPRO intent + broker orderbook (conservative matching).
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      <h1 className="sr-only">Orders</h1>
+      <div className="flex flex-wrap items-center justify-end gap-2">
           <label className="flex items-center gap-2 rounded-md border bg-card px-2 py-1 text-sm shadow-sm">
             <input
               aria-label="Include broker orders"
@@ -348,7 +342,6 @@ export function OrdersPage() {
           <Button type="button" variant="outline" size="sm" onClick={() => void orders.refetch()} disabled={orders.isFetching}>
             {orders.isFetching ? 'Refreshing…' : 'Refresh'}
           </Button>
-        </div>
       </div>
       {Object.keys(brokerErrors).length ? (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">

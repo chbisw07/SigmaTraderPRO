@@ -384,33 +384,26 @@ export function SearchPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Search</h1>
-          <p className="text-sm text-muted-foreground">
-            Canonical-first instrument search (no broker symbols in UI). Use Trade to open stock or F&amp;O tickets.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="text-xs text-muted-foreground">Broker context</div>
-          <select
-            aria-label="Broker context"
-            value={selectedBroker ?? ''}
-            onChange={(e) => void onBrokerChange(e.target.value)}
-            disabled={brokerBusy}
-            className={cn(
-              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
-              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            )}
-          >
-            <option value="">None</option>
-            {BROKER_OPTIONS.map((b) => (
-              <option key={b.key} value={b.key}>
-                {b.label}
-              </option>
-            ))}
-          </select>
-        </div>
+      <h1 className="sr-only">Search</h1>
+      <div className="flex items-center justify-end gap-2">
+        <div className="text-xs text-muted-foreground">Broker context</div>
+        <select
+          aria-label="Broker context"
+          value={selectedBroker ?? ''}
+          onChange={(e) => void onBrokerChange(e.target.value)}
+          disabled={brokerBusy}
+          className={cn(
+            'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+            'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+          )}
+        >
+          <option value="">None</option>
+          {BROKER_OPTIONS.map((b) => (
+            <option key={b.key} value={b.key}>
+              {b.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <Card>

@@ -222,12 +222,8 @@ export function PositionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Positions</h1>
-          <p className="text-sm text-muted-foreground">Local broker-neutral positions ledger (fill-level accuracy is reconciled later).</p>
-        </div>
-        <div className="flex items-center gap-2">
+      <h1 className="sr-only">Positions</h1>
+      <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             type="button"
             variant="outline"
@@ -240,7 +236,6 @@ export function PositionsPage() {
           <Button type="button" variant="outline" size="sm" onClick={() => void positions.refetch()} disabled={positions.isFetching}>
             {positions.isFetching ? 'Refreshing…' : 'Refresh view'}
           </Button>
-        </div>
       </div>
       {banner ? (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">

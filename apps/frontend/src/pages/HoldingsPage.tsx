@@ -192,16 +192,11 @@ export function HoldingsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Holdings</h1>
-          <p className="text-sm text-muted-foreground">Broker holdings inventory (delivery/long-term). Values reflect broker snapshots.</p>
-        </div>
-        <div className="flex items-center gap-2">
+      <h1 className="sr-only">Holdings</h1>
+      <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => void holdings.refetch()} disabled={holdings.isFetching}>
             {holdings.isFetching ? 'Refreshing…' : 'Refresh'}
           </Button>
-        </div>
       </div>
 
       {banner ? (

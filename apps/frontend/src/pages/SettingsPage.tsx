@@ -5,12 +5,7 @@ import { cn } from '@/lib/utils'
 export function SettingsPage() {
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="text-sm text-muted-foreground">
-          Foundation settings for the shell. No backend persistence yet.
-        </p>
-      </div>
+      <h1 className="sr-only">Settings</h1>
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2 shadow-sm">
         <div className="flex items-center gap-1 rounded-md bg-muted/40 p-1">
