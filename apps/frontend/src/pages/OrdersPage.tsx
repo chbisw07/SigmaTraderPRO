@@ -17,6 +17,12 @@ import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 
 const EMPTY_ROWS: ordersApi.OrdersWorkspaceRow[] = []
 
+function normalizeIsoForDateParse(value: string): string {
+  // Some servers serialize microseconds (6 digits), which is not reliably parsed by `Date`.
+  // Trim to milliseconds when present.
+  return value.replace(/(\.\d{3})\d+(Z|[+-]\d{2}:\d{2})$/, '$1$2')
+}
+
 function StatusBadge({ status }: { status: string | null }) {
   const s = (status ?? '—').toUpperCase()
   const cls =
@@ -49,13 +55,32 @@ function instrumentTitle(i: ordersApi.InstrumentOut | null): string {
   return i.display_symbol
 }
 
+function localYmd(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function parseLocalYmd(ymd: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd)
+  if (!m) return null
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const d = Number(m[3])
+  if (!y || !mo || !d) return null
+  return new Date(y, mo - 1, d)
+}
+
+function addDaysLocal(d: Date, days: number): Date {
+  const out = new Date(d)
+  out.setDate(out.getDate() + days)
+  return out
+}
+
 function formatPlacedAt(value: string | null): string {
   if (!value) return '—'
-  const normalized =
-    // Some backends may serialize microseconds (6 digits), which is not reliably parsed by `Date`.
-    // Trim to milliseconds when present.
-    value.replace(/(\.\d{3})\d+(Z|[+-]\d{2}:\d{2})$/, '$1$2')
-  const d = new Date(normalized)
+  const d = new Date(normalizeIsoForDateParse(value))
   if (Number.isNaN(d.getTime())) return '—'
   // Compact, single-line, locale-aware timestamp (no seconds).
   return d
@@ -76,11 +101,14 @@ export function OrdersPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
+  const todayYmd = useMemo(() => localYmd(new Date()), [])
   const [q, setQ] = useState(() => searchParams.get('q') ?? '')
   const [broker, setBroker] = useState<ordersApi.BrokerKey | ''>('')
   const [status, setStatus] = useState<string>('')
   const [instrumentType, setInstrumentType] = useState<string>('')
   const [product, setProduct] = useState<string>('')
+  const [fromDate, setFromDate] = useState<string>(() => todayYmd)
+  const [toDate, setToDate] = useState<string>(() => todayYmd)
   const includeBrokerOrders = user?.include_broker_orders ?? true
   const [mode, setMode] = useState<ordersApi.OrdersSourceMode>(() => (includeBrokerOrders ? 'merged' : 'internal_only'))
 
@@ -110,10 +138,61 @@ export function OrdersPage() {
 
   const rows = orders.data?.items ?? EMPTY_ROWS
   const brokerErrors = orders.data?.meta?.broker_errors ?? {}
+
+  const dateBounds = useMemo(() => {
+    let earliestMs: number | null = null
+    let latestMs: number | null = null
+    for (const r of rows) {
+      if (!r.placed_at) continue
+      const ms = new Date(normalizeIsoForDateParse(r.placed_at)).getTime()
+      if (Number.isNaN(ms)) continue
+      earliestMs = earliestMs == null ? ms : Math.min(earliestMs, ms)
+      latestMs = latestMs == null ? ms : Math.max(latestMs, ms)
+    }
+    return {
+      earliestYmd: earliestMs != null ? localYmd(new Date(earliestMs)) : null,
+      latestYmd: latestMs != null ? localYmd(new Date(latestMs)) : null,
+    }
+  }, [rows])
+
+  useEffect(() => {
+    const min = dateBounds.earliestYmd
+    if (!min) return
+    if (fromDate < min) setFromDate(min)
+    if (toDate < min) setToDate(min)
+  }, [dateBounds.earliestYmd, fromDate, toDate])
+
+  useEffect(() => {
+    // Prevent selecting dates beyond today.
+    if (fromDate > todayYmd) setFromDate(todayYmd)
+    if (toDate > todayYmd) setToDate(todayYmd)
+  }, [fromDate, toDate, todayYmd])
+
+  useEffect(() => {
+    // Keep a valid range.
+    if (fromDate > toDate) setToDate(fromDate)
+  }, [fromDate, toDate])
+
+  const filteredRows = useMemo(() => {
+    const start = parseLocalYmd(fromDate)
+    const end = parseLocalYmd(toDate)
+    if (!start || !end) return rows
+    const startMs = Math.min(start.getTime(), end.getTime())
+    const endMs = Math.max(start.getTime(), end.getTime())
+    const endExclusiveMs = addDaysLocal(new Date(endMs), 1).getTime()
+
+    return rows.filter((r) => {
+      if (!r.placed_at) return false
+      const ms = new Date(normalizeIsoForDateParse(r.placed_at)).getTime()
+      if (Number.isNaN(ms)) return false
+      return ms >= startMs && ms < endExclusiveMs
+    })
+  }, [rows, fromDate, toDate])
+
   const reconciliationNeeded = useMemo(() => {
     if (!includeBrokerOrders) return 0
-    return rows.filter((r) => r.reconciliation_state === 'unresolved').length
-  }, [includeBrokerOrders, rows])
+    return filteredRows.filter((r) => r.reconciliation_state === 'unresolved').length
+  }, [includeBrokerOrders, filteredRows])
 
   const [payloadOpen, setPayloadOpen] = useState(false)
   const [payloadOrderId, setPayloadOrderId] = useState<number | null>(null)
@@ -324,6 +403,31 @@ export function OrdersPage() {
               placeholder="Search symbol / canonical / broker id / correlation…"
               className="h-9 w-[360px] max-w-full"
             />
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2">
+                <div className="text-xs text-muted-foreground">From</div>
+                <Input
+                  type="date"
+                  value={fromDate}
+                  min={dateBounds.earliestYmd || undefined}
+                  max={toDate || todayYmd}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="h-9 w-[150px]"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="text-xs text-muted-foreground">To</div>
+                <Input
+                  type="date"
+                  value={toDate}
+                  min={fromDate || dateBounds.earliestYmd || undefined}
+                  max={todayYmd}
+                  onChange={(e) => setToDate(e.target.value)}
+                  className="h-9 w-[150px]"
+                />
+              </div>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -398,6 +502,8 @@ export function OrdersPage() {
                 setStatus('')
                 setProduct('')
                 setInstrumentType('')
+                setFromDate(todayYmd)
+                setToDate(todayYmd)
               }}
             >
               Clear
@@ -409,7 +515,10 @@ export function OrdersPage() {
       <div className="rounded-lg border bg-card">
         <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
           <div className="text-sm font-medium">Latest first</div>
-          <div className="text-xs text-muted-foreground">{rows.length} orders</div>
+          <div className="text-xs text-muted-foreground">
+            {filteredRows.length}
+            {filteredRows.length !== rows.length ? ` / ${rows.length}` : ''} orders
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -434,7 +543,7 @@ export function OrdersPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {rows.map((o) => {
+              {filteredRows.map((o) => {
                 const internalId = o.internal_order_id
                 const busy = internalId != null ? actionBusy.has(internalId) : false
                 const title = o.instrument ? instrumentTitle(o.instrument) : (o.symbol_display ?? '—')
@@ -574,10 +683,10 @@ export function OrdersPage() {
                     Loading orders…
                   </td>
                 </tr>
-              ) : !rows.length && !orders.isFetching ? (
+              ) : !filteredRows.length && !orders.isFetching ? (
                 <tr>
                   <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={15}>
-                    No orders yet. Place one from Search.
+                    No orders in selected date range.
                   </td>
                 </tr>
               ) : null}

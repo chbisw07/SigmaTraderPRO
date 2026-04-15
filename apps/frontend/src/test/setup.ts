@@ -941,6 +941,8 @@ beforeAll(() => {
     }
 
     if (path === '/api/v1/orders/workspace') {
+      const now = Date.now()
+      const iso = (deltaMs: number) => new Date(now + deltaMs).toISOString()
       return jsonResponse({
         items: [
           {
@@ -981,7 +983,7 @@ beforeAll(() => {
             status: 'PENDING',
             rejection_reason: null,
             correlation_id: 'c-11111111-1111-1111-1111-111111111111',
-            placed_at: '2026-04-09T00:00:00Z',
+            placed_at: iso(-3 * 60_000),
             source: 'manual_ui',
             intent_type: 'ENTRY',
             linked_position_id: 1,
@@ -1026,7 +1028,7 @@ beforeAll(() => {
             correlation_id: 'c-22222222-2222-2222-2222-222222222222',
             blocked_reason_code: 'BROKER_SESSION_STALE',
             blocked_reason_message: 'Broker session is stale. Reconnect broker and try again.',
-            placed_at: '2026-04-09T00:01:00Z',
+            placed_at: iso(-2 * 60_000),
             source: 'manual_ui',
             intent_type: 'ENTRY',
             linked_position_id: null,
@@ -1054,7 +1056,7 @@ beforeAll(() => {
             correlation_id: 'c-33333333-3333-3333-3333-333333333333',
             failure_reason_code: 'BROKER_DISPATCH_ERROR',
             failure_reason_message: 'Order dispatch failed before broker acknowledgement.',
-            placed_at: '2026-04-09T00:02:00Z',
+            placed_at: iso(-60_000),
             source: 'manual_ui',
             intent_type: 'ENTRY',
             linked_position_id: null,
@@ -1080,7 +1082,7 @@ beforeAll(() => {
             status: 'ACKNOWLEDGED',
             rejection_reason: null,
             correlation_id: 'c-44444444-4444-4444-4444-444444444444',
-            placed_at: '2026-04-09T00:03:00Z',
+            placed_at: iso(0),
             source: 'manual_ui',
             intent_type: 'ENTRY',
             linked_position_id: null,
