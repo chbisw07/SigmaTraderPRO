@@ -557,8 +557,8 @@ export function WatchlistPage() {
                   value={broker}
                   onChange={(e) => void updateLastUsedBroker(e.target.value)}
                   className={cn(
-                    'h-9 rounded-md border bg-background px-2 text-sm outline-none',
-                    'focus-visible:ring-2 focus-visible:ring-ring',
+                    'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                    'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                     isCompact && 'h-8 text-xs',
                   )}
                   aria-label="Broker"
@@ -1023,7 +1023,7 @@ export function WatchlistPage() {
           <div className="space-y-6">
             <div className="space-y-3">
               <div className="text-sm font-medium">Layout</div>
-              <div className="flex items-center gap-1 rounded-md border bg-background p-1">
+              <div className="flex items-center gap-1 rounded-md border bg-muted/40 p-1 shadow-sm">
                 <Button
                   type="button"
                   size="icon"

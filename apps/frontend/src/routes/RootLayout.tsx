@@ -59,14 +59,20 @@ export function RootLayout() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <header className="flex h-14 items-center justify-between border-b bg-background px-4">
+      <header
+        className={cn(
+          'flex h-14 items-center justify-between border-b px-4',
+          'bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/70',
+          'shadow-sm',
+        )}
+      >
         <div className="flex min-w-0 items-center gap-4">
           <Link to="/search" className="flex min-w-0 items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md border bg-background text-sm font-semibold">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-sm font-semibold text-primary">
               Σ
             </div>
             <div className="hidden sm:block min-w-0">
-              <div className="truncate text-sm font-semibold">SigmaTraderPRO</div>
+              <div className="truncate text-sm font-semibold tracking-tight">SigmaTraderPRO</div>
               <div className="truncate text-[11px] text-muted-foreground">
                 ML1 • Terminal
               </div>
@@ -81,7 +87,7 @@ export function RootLayout() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="hidden sm:inline-flex">
+          <Badge variant="outline" className="hidden sm:inline-flex text-[10px] text-muted-foreground">
             Dev
           </Badge>
           <ThemeSelect />
@@ -92,7 +98,7 @@ export function RootLayout() {
       <div className="flex flex-1 min-h-0">
         <aside
           className={cn(
-            'hidden md:block shrink-0 border-r bg-card/30',
+            'hidden md:block shrink-0 border-r bg-background',
           )}
           style={{ width: widthPx, minWidth: minPx, maxWidth: maxPx }}
         >

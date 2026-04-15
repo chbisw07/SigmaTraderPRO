@@ -109,7 +109,10 @@ export function SystemEventsPage() {
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="">All categories</option>
             <option value="order_dispatch">order_dispatch</option>
@@ -125,7 +128,10 @@ export function SystemEventsPage() {
           <select
             value={level}
             onChange={(e) => setLevel(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="">All levels</option>
             {['INFO', 'WARNING', 'ERROR'].map((l) => (
@@ -147,8 +153,8 @@ export function SystemEventsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground">
+          <table className="w-full text-[13px] tabular-nums">
+            <thead className="sticky top-0 z-10 bg-card/95 text-[11px] font-semibold text-muted-foreground backdrop-blur">
               <tr className="border-b">
                 <th className="px-3 py-2 text-left">Time</th>
                 <th className="px-3 py-2 text-left">Level</th>
@@ -159,7 +165,7 @@ export function SystemEventsPage() {
             </thead>
             <tbody className="divide-y">
               {rows.map((e) => (
-                <tr key={e.id} className="hover:bg-accent/20">
+                <tr key={e.id} className="transition-colors hover:bg-accent/30">
                   <td className="px-3 py-2 text-xs text-muted-foreground">
                     {e.created_at ? new Date(e.created_at).toLocaleString() : '—'}
                   </td>

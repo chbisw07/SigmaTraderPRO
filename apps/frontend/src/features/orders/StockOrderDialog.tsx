@@ -460,8 +460,8 @@ export function StockOrderDialog({ open, onOpenChange, launch, intentSubmit }: P
                   setPreview(null)
                 }}
                 className={cn(
-                  'h-10 w-full rounded-md border bg-background px-2 text-sm outline-none',
-                  'focus-visible:ring-2 focus-visible:ring-ring',
+                  'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                  'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                 )}
               >
                 <option value="angel">Angel One</option>
@@ -563,8 +563,8 @@ export function StockOrderDialog({ open, onOpenChange, launch, intentSubmit }: P
                   setPreview(null)
                 }}
                 className={cn(
-                  'h-10 w-full rounded-md border bg-background px-2 text-sm outline-none',
-                  'focus-visible:ring-2 focus-visible:ring-ring',
+                  'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                  'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                 )}
               >
                 <option value="MARKET">Market</option>

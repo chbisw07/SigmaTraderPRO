@@ -333,7 +333,7 @@ export function OrdersPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-2 rounded-md border bg-background px-2 py-1 text-sm">
+          <label className="flex items-center gap-2 rounded-md border bg-card px-2 py-1 text-sm shadow-sm">
             <input
               aria-label="Include broker orders"
               type="checkbox"
@@ -385,7 +385,7 @@ export function OrdersPage() {
         </CardHeader>
         <CardContent className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 rounded-md border bg-background p-1">
+            <div className="flex items-center gap-1 rounded-md border bg-muted/40 p-1 shadow-sm">
               {(['merged', 'internal_only', 'broker_only'] as const).map((m) => (
                 <Button
                   key={m}
@@ -443,8 +443,8 @@ export function OrdersPage() {
                 else setBroker('')
               }}
               className={cn(
-                'h-9 w-[140px] rounded-md border bg-background px-2 text-sm outline-none',
-                'focus-visible:ring-2 focus-visible:ring-ring',
+                'h-9 w-[140px] rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               )}
             >
               <option value="">All brokers</option>
@@ -455,8 +455,8 @@ export function OrdersPage() {
               value={status}
               onChange={(e) => setStatus(e.target.value)}
               className={cn(
-                'h-9 w-[160px] rounded-md border bg-background px-2 text-sm outline-none',
-                'focus-visible:ring-2 focus-visible:ring-ring',
+                'h-9 w-[160px] rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               )}
             >
               <option value="">All statuses</option>
@@ -470,8 +470,8 @@ export function OrdersPage() {
               value={product}
               onChange={(e) => setProduct(e.target.value)}
               className={cn(
-                'h-9 w-[130px] rounded-md border bg-background px-2 text-sm outline-none',
-                'focus-visible:ring-2 focus-visible:ring-ring',
+                'h-9 w-[130px] rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               )}
             >
               <option value="">All products</option>
@@ -485,8 +485,8 @@ export function OrdersPage() {
               value={instrumentType}
               onChange={(e) => setInstrumentType(e.target.value)}
               className={cn(
-                'h-9 w-[130px] rounded-md border bg-background px-2 text-sm outline-none',
-                'focus-visible:ring-2 focus-visible:ring-ring',
+                'h-9 w-[130px] rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               )}
             >
               <option value="">All types</option>
@@ -526,24 +526,24 @@ export function OrdersPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full table-fixed text-[13px]">
-            <thead className="text-xs text-muted-foreground">
+          <table className="w-full table-fixed text-[13px] tabular-nums">
+            <thead className="sticky top-0 z-10 bg-card/95 text-[11px] font-semibold text-muted-foreground backdrop-blur">
               <tr className="border-b">
-                <th className="w-[150px] px-3 py-2 text-left">Time</th>
-                <th className="w-[280px] px-3 py-2 text-left">Symbol</th>
-                <th className="w-[72px] px-3 py-2 text-left">Side</th>
-                <th className="w-[84px] px-3 py-2 text-left">Broker</th>
-                <th className="w-[76px] px-3 py-2 text-left">Product</th>
-                <th className="w-[96px] px-3 py-2 text-right">Qty/Lots</th>
-                <th className="w-[84px] px-3 py-2 text-left">Type</th>
-                <th className="w-[86px] px-3 py-2 text-right">Placed</th>
-                <th className="w-[74px] px-3 py-2 text-right">Avg</th>
-                <th className="w-[160px] px-3 py-2 text-left">Status</th>
-                <th className="w-[92px] px-3 py-2 text-left">Origin</th>
-                <th className="w-[92px] px-3 py-2 text-left">Recon</th>
-                <th className="w-[130px] px-3 py-2 text-left">Source</th>
-                <th className="w-[70px] px-3 py-2 text-right">PnL</th>
-                <th className="w-[340px] px-3 py-2 text-right">Actions</th>
+                <th className="w-[150px] px-3 py-2.5 text-left">Time</th>
+                <th className="w-[280px] px-3 py-2.5 text-left">Symbol</th>
+                <th className="w-[72px] px-3 py-2.5 text-left">Side</th>
+                <th className="w-[84px] px-3 py-2.5 text-left">Broker</th>
+                <th className="w-[76px] px-3 py-2.5 text-left">Product</th>
+                <th className="w-[96px] px-3 py-2.5 text-right">Qty/Lots</th>
+                <th className="w-[84px] px-3 py-2.5 text-left">Type</th>
+                <th className="w-[86px] px-3 py-2.5 text-right">Placed</th>
+                <th className="w-[74px] px-3 py-2.5 text-right">Avg</th>
+                <th className="w-[160px] px-3 py-2.5 text-left">Status</th>
+                <th className="w-[92px] px-3 py-2.5 text-left">Origin</th>
+                <th className="w-[92px] px-3 py-2.5 text-left">Recon</th>
+                <th className="w-[130px] px-3 py-2.5 text-left">Source</th>
+                <th className="w-[70px] px-3 py-2.5 text-right">PnL</th>
+                <th className="w-[340px] px-3 py-2.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -564,9 +564,9 @@ export function OrdersPage() {
                 const sourceLabel = o.source ?? ''
                 const sourceFull = o.intent_type ? `${sourceLabel} · ${o.intent_type}` : sourceLabel
                 return (
-                  <tr key={o.row_id} className="hover:bg-accent/20">
-                    <td className="px-3 py-1.5 text-xs text-muted-foreground whitespace-nowrap">{formatPlacedAt(o.placed_at)}</td>
-                    <td className="px-3 py-1.5">
+                  <tr key={o.row_id} className="transition-colors hover:bg-accent/30">
+                    <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{formatPlacedAt(o.placed_at)}</td>
+                    <td className="px-3 py-2">
                       <div className="flex min-w-0 items-center gap-2">
                         <div className="min-w-0 truncate font-medium leading-tight" title={symbolTooltip || undefined}>
                           {title}
@@ -578,14 +578,14 @@ export function OrdersPage() {
                         ) : null}
                       </div>
                     </td>
-                    <td className={cn('px-3 py-1.5 font-medium whitespace-nowrap', sideCls)}>{o.side ?? '—'}</td>
-                    <td className="px-3 py-1.5 whitespace-nowrap">{o.broker}</td>
-                    <td className="px-3 py-1.5 whitespace-nowrap">{o.product ?? '—'}</td>
-                    <td className="px-3 py-1.5 tabular-nums text-right whitespace-nowrap">{o.lots != null ? `${formatQty(o.lots)} lots` : formatQty(o.quantity)}</td>
-                    <td className="px-3 py-1.5 whitespace-nowrap">{o.order_type ?? '—'}</td>
-                    <td className="px-3 py-1.5 tabular-nums text-right whitespace-nowrap">{formatNumber(o.placed_price)}</td>
-                    <td className="px-3 py-1.5 tabular-nums text-right whitespace-nowrap">{formatNumber(o.avg_price)}</td>
-                    <td className="px-3 py-1.5">
+                    <td className={cn('px-3 py-2 font-medium whitespace-nowrap', sideCls)}>{o.side ?? '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{o.broker}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{o.product ?? '—'}</td>
+                    <td className="px-3 py-2 tabular-nums text-right whitespace-nowrap">{o.lots != null ? `${formatQty(o.lots)} lots` : formatQty(o.quantity)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{o.order_type ?? '—'}</td>
+                    <td className="px-3 py-2 tabular-nums text-right whitespace-nowrap">{formatNumber(o.placed_price)}</td>
+                    <td className="px-3 py-2 tabular-nums text-right whitespace-nowrap">{formatNumber(o.avg_price)}</td>
+                    <td className="px-3 py-2">
                       <StatusBadge status={o.status} />
                       {o.blocked_reason_message ? (
                         <div className="mt-1 max-w-[260px] truncate text-[11px] text-amber-800 dark:text-amber-200">
@@ -597,25 +597,25 @@ export function OrdersPage() {
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-3 py-1.5">
+                    <td className="px-3 py-2">
                       <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
                         {o.source_origin}
                       </Badge>
                     </td>
-                    <td className="px-3 py-1.5">
+                    <td className="px-3 py-2">
                       <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
                         {o.reconciliation_state}
                       </Badge>
                     </td>
-                    <td className="px-3 py-1.5 text-xs text-muted-foreground">
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
                       {sourceFull ? (
                         <div className="truncate" title={sourceFull}>
                           {sourceFull}
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-3 py-1.5 text-right text-xs text-muted-foreground" />
-                    <td className="px-3 py-1.5 text-right">
+                    <td className="px-3 py-2 text-right text-xs text-muted-foreground" />
+                    <td className="px-3 py-2 text-right">
                       <div className="flex justify-end gap-1.5">
                         {internalId != null ? (
                           <>

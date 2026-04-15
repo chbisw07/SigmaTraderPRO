@@ -399,8 +399,8 @@ export function SearchPage() {
             onChange={(e) => void onBrokerChange(e.target.value)}
             disabled={brokerBusy}
             className={cn(
-              'h-9 rounded-md border bg-background px-2 text-sm outline-none',
-              'focus-visible:ring-2 focus-visible:ring-ring',
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             )}
           >
             <option value="">None</option>
@@ -474,8 +474,8 @@ export function SearchPage() {
               value={filterType}
               onChange={(e) => setFilterType(e.target.value as typeof filterType)}
               className={cn(
-                'h-10 rounded-md border bg-background px-2 text-sm outline-none',
-                'focus-visible:ring-2 focus-visible:ring-ring',
+                'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               )}
             >
               <option value="all">All</option>
@@ -685,8 +685,8 @@ export function SearchPage() {
                 }}
                 disabled={!underlying || expiries.isFetching}
                 className={cn(
-                  'h-10 w-full rounded-md border bg-background px-2 text-sm outline-none',
-                  'focus-visible:ring-2 focus-visible:ring-ring',
+                  'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                  'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                 )}
               >
                 <option value="">Select expiry</option>

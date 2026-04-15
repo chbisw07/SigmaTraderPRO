@@ -264,7 +264,10 @@ export function HoldingsPage() {
               if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
               else setBroker('')
             }}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="">All brokers</option>
             <option value="angel">Angel One</option>
@@ -283,8 +286,8 @@ export function HoldingsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground">
+          <table className="w-full text-[13px] tabular-nums">
+            <thead className="sticky top-0 z-10 bg-card/95 text-[11px] font-semibold text-muted-foreground backdrop-blur">
               <tr className="border-b">
                 <th className="px-3 py-2 text-left">Symbol</th>
                 <th className="px-3 py-2 text-left">Actions</th>
@@ -307,7 +310,7 @@ export function HoldingsPage() {
                 return (
                   <tr
                     key={h.row_id}
-                    className="hover:bg-accent/20"
+                    className="transition-colors hover:bg-accent/30"
                   >
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">

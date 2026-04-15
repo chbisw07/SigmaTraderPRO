@@ -171,7 +171,10 @@ export function TradingViewSettingsPage() {
           <select
             value={createBroker}
             onChange={(e) => setCreateBroker(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="zerodha">Zerodha</option>
             <option value="angel">Angel One</option>
@@ -179,7 +182,10 @@ export function TradingViewSettingsPage() {
           <select
             value={createMode}
             onChange={(e) => setCreateMode(e.target.value as routesApi.QueueExecutionMode)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="manual_review">Manual review</option>
             <option value="auto_dispatch">Auto dispatch</option>
@@ -187,7 +193,10 @@ export function TradingViewSettingsPage() {
           <select
             value={createProduct}
             onChange={(e) => setCreateProduct(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="">No default product</option>
             <option value="CNC">CNC (Delivery)</option>
@@ -197,7 +206,10 @@ export function TradingViewSettingsPage() {
           <select
             value={createOrderType}
             onChange={(e) => setCreateOrderType(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="">No default order type</option>
             <option value="MARKET">Market</option>
@@ -206,7 +218,10 @@ export function TradingViewSettingsPage() {
           <select
             value={productModeDefault}
             onChange={(e) => setProductModeDefault(e.target.value as routesApi.ProductMode | '')}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="">No product mode default</option>
             <option value="delivery">Delivery</option>
@@ -217,7 +232,10 @@ export function TradingViewSettingsPage() {
           <select
             value={sizingMode}
             onChange={(e) => setSizingMode(e.target.value as routesApi.TradingViewSizingMode | '')}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="">No sizing policy</option>
             <option value="fixed_quantity">Fixed quantity</option>
@@ -269,9 +287,9 @@ export function TradingViewSettingsPage() {
         </div>
 
         <div className="mt-3 overflow-auto rounded-md border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40 text-xs text-muted-foreground">
-              <tr>
+          <table className="w-full text-[13px] tabular-nums">
+            <thead className="sticky top-0 z-10 bg-card/95 text-[11px] font-semibold text-muted-foreground backdrop-blur">
+              <tr className="border-b">
                 <th className="px-3 py-2 text-left">Name</th>
                 <th className="px-3 py-2 text-left">Status</th>
                 <th className="px-3 py-2 text-left">Broker</th>
@@ -284,7 +302,7 @@ export function TradingViewSettingsPage() {
             </thead>
             <tbody>
               {sortedRoutes.map((r) => (
-                <tr key={r.id} className="border-t">
+                <tr key={r.id} className="border-t transition-colors hover:bg-accent/30">
                   <td className="px-3 py-2 font-medium">{r.name ?? `Route ${r.id}`}</td>
                   <td className="px-3 py-2">{r.is_enabled ? 'Enabled' : 'Disabled'}</td>
                   <td className="px-3 py-2">{r.default_broker_key ?? '—'}</td>
@@ -384,7 +402,10 @@ export function TradingViewSettingsPage() {
                   <select
                     value={editBroker}
                     onChange={(e) => setEditBroker(e.target.value)}
-                    className={cn('mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+                    className={cn(
+                      'mt-1 h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
                   >
                     <option value="">—</option>
                     <option value="zerodha">Zerodha</option>
@@ -396,7 +417,10 @@ export function TradingViewSettingsPage() {
                   <select
                     value={editMode}
                     onChange={(e) => setEditMode(e.target.value as routesApi.QueueExecutionMode)}
-                    className={cn('mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+                    className={cn(
+                      'mt-1 h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
                   >
                     <option value="manual_review">Manual review</option>
                     <option value="auto_dispatch">Auto dispatch</option>
@@ -407,7 +431,10 @@ export function TradingViewSettingsPage() {
                   <select
                     value={editProduct}
                     onChange={(e) => setEditProduct(e.target.value)}
-                    className={cn('mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+                    className={cn(
+                      'mt-1 h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
                   >
                     <option value="">—</option>
                     <option value="CNC">CNC</option>
@@ -420,7 +447,10 @@ export function TradingViewSettingsPage() {
                   <select
                     value={editOrderType}
                     onChange={(e) => setEditOrderType(e.target.value)}
-                    className={cn('mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+                    className={cn(
+                      'mt-1 h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
                   >
                     <option value="">—</option>
                     <option value="MARKET">MARKET</option>
@@ -444,7 +474,10 @@ export function TradingViewSettingsPage() {
                             : null,
                         }))
                       }
-                      className={cn('mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+                      className={cn(
+                        'mt-1 h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
                     >
                       <option value="">—</option>
                       <option value="delivery">Delivery</option>
@@ -464,7 +497,10 @@ export function TradingViewSettingsPage() {
                             : null,
                         }))
                       }
-                      className={cn('mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+                      className={cn(
+                        'mt-1 h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
                     >
                       <option value="">—</option>
                       <option value="fixed_quantity">Fixed quantity</option>
@@ -573,7 +609,7 @@ export function TradingViewSettingsPage() {
 
                 <details className="mt-3">
                   <summary className="cursor-pointer text-xs text-muted-foreground">Advanced: view policy JSON</summary>
-                  <pre className="mt-2 max-h-48 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px]">
+                  <pre className="mt-2 max-h-48 overflow-auto rounded-md border bg-muted/30 p-2 font-mono text-[11px]">
                     {JSON.stringify(editPolicy ?? {}, null, 2)}
                   </pre>
                 </details>

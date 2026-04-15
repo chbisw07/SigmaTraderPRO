@@ -53,7 +53,7 @@ export function LoginPage() {
         <div className="w-full space-y-6">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-card text-lg font-semibold">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-lg font-semibold text-primary">
                 Σ
               </div>
               <div>
@@ -82,8 +82,8 @@ export function LoginPage() {
                 required
                 placeholder="you@example.com"
                 className={cn(
-                  'h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none',
-                  'focus-visible:ring-2 focus-visible:ring-ring',
+                  'h-10 w-full rounded-md border border-input bg-card px-3 text-sm outline-none shadow-sm',
+                  'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                 )}
               />
             </div>
@@ -104,8 +104,8 @@ export function LoginPage() {
                 required
                 placeholder="••••••••"
                 className={cn(
-                  'h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none',
-                  'focus-visible:ring-2 focus-visible:ring-ring',
+                  'h-10 w-full rounded-md border border-input bg-card px-3 text-sm outline-none shadow-sm',
+                  'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                 )}
               />
             </div>

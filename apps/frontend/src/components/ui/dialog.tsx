@@ -41,7 +41,7 @@ export function DialogContent({
       <DialogPrimitive.Content
         className={cn(
           'fixed left-1/2 top-1/2 z-50 w-[96vw] max-w-xl -translate-x-1/2 -translate-y-1/2',
-          'rounded-lg border bg-background p-4 shadow-lg',
+          'rounded-xl border bg-card p-4 shadow-lg',
           'focus:outline-none',
           className,
         )}
@@ -53,7 +53,7 @@ export function DialogContent({
           className={cn(
             'absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md',
             'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           )}
         >
           <X className="h-4 w-4" />
