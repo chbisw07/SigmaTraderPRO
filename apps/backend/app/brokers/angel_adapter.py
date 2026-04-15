@@ -39,6 +39,64 @@ from app.orders.types import (
 
 logger = get_logger(__name__)
 
+def _parse_order_timestamp(ts: object) -> datetime | None:
+    if not ts:
+        return None
+    if isinstance(ts, datetime):
+        return ts
+
+    if isinstance(ts, (int, float)):
+        v = float(ts)
+        # Heuristic: treat 13+ digit epochs as milliseconds.
+        if v > 1_000_000_000_000:
+            v = v / 1000.0
+        try:
+            return datetime.fromtimestamp(v, tz=UTC)
+        except Exception:
+            return None
+
+    s = str(ts).strip()
+    if not s:
+        return None
+
+    if s.isdigit():
+        try:
+            v = float(s)
+            if v > 1_000_000_000_000:
+                v = v / 1000.0
+            return datetime.fromtimestamp(v, tz=UTC)
+        except Exception:
+            return None
+
+    # Common formats: "2026-04-10 09:15:00" or ISO.
+    try:
+        fixed = s.replace("Z", "+00:00")
+        if " " in fixed and "T" not in fixed:
+            fixed = fixed.replace(" ", "T", 1)
+        return datetime.fromisoformat(fixed)
+    except Exception:
+        pass
+
+    # Broker SDKs sometimes return non-ISO formats.
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y %H:%M",
+        "%d-%b-%Y %H:%M:%S",
+        "%d-%b-%Y %H:%M",
+        "%d %b %Y %H:%M:%S",
+        "%d %b %Y %H:%M",
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except Exception:
+            continue
+
+    return None
+
 
 def _get_connection(db: Session, user_id: int) -> BrokerConnection | None:
     return (
@@ -457,19 +515,22 @@ class AngelAdapter(BrokerAdapter):
             symbol_token = row.get("symboltoken") or row.get("symbolToken")
             exchange = row.get("exchange") or row.get("exch_seg")
 
-            placed_at = None
             ts = (
                 row.get("updatetime")
+                or row.get("updateTime")
                 or row.get("orderdatetime")
+                or row.get("orderDateTime")
                 or row.get("orderTime")
+                or row.get("order_timestamp")
+                or row.get("orderTimestamp")
+                or row.get("exchtime")
+                or row.get("exchTime")
+                or row.get("exchange_timestamp")
+                or row.get("exchangeTimestamp")
+                or row.get("created_at")
+                or row.get("createdAt")
             )
-            if ts:
-                try:
-                    # Common formats: "2026-04-10 09:15:00" or ISO.
-                    s = str(ts).replace("Z", "+00:00").replace(" ", "T", 1)
-                    placed_at = datetime.fromisoformat(s)
-                except Exception:
-                    placed_at = None
+            placed_at = _parse_order_timestamp(ts)
 
             qty = None
             try:

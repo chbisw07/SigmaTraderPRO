@@ -51,7 +51,11 @@ function instrumentTitle(i: ordersApi.InstrumentOut | null): string {
 
 function formatPlacedAt(value: string | null): string {
   if (!value) return '—'
-  const d = new Date(value)
+  const normalized =
+    // Some backends may serialize microseconds (6 digits), which is not reliably parsed by `Date`.
+    // Trim to milliseconds when present.
+    value.replace(/(\.\d{3})\d+(Z|[+-]\d{2}:\d{2})$/, '$1$2')
+  const d = new Date(normalized)
   if (Number.isNaN(d.getTime())) return '—'
   // Compact, single-line, locale-aware timestamp (no seconds).
   return d
@@ -424,11 +428,9 @@ export function OrdersPage() {
                 <th className="w-[160px] px-3 py-2 text-left">Status</th>
                 <th className="w-[92px] px-3 py-2 text-left">Origin</th>
                 <th className="w-[92px] px-3 py-2 text-left">Recon</th>
-                <th className="w-[160px] px-3 py-2 text-left">Broker ID</th>
-                <th className="w-[190px] px-3 py-2 text-left">Correlation</th>
                 <th className="w-[130px] px-3 py-2 text-left">Source</th>
                 <th className="w-[70px] px-3 py-2 text-right">PnL</th>
-                <th className="w-[300px] px-3 py-2 text-right">Actions</th>
+                <th className="w-[340px] px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -491,20 +493,6 @@ export function OrdersPage() {
                       <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
                         {o.reconciliation_state}
                       </Badge>
-                    </td>
-                    <td className="px-3 py-1.5 text-xs text-muted-foreground">
-                      <div className="truncate font-mono" title={o.broker_order_id ?? undefined}>
-                        {o.broker_order_id ?? '—'}
-                      </div>
-                    </td>
-                    <td className="px-3 py-1.5 text-xs text-muted-foreground">
-                      {o.correlation_id ? (
-                        <div className="truncate font-mono" title={o.correlation_id}>
-                          {o.correlation_id}
-                        </div>
-                      ) : (
-                        '—'
-                      )}
                     </td>
                     <td className="px-3 py-1.5 text-xs text-muted-foreground">
                       <div className="truncate" title={sourceFull !== '—' ? sourceFull : undefined}>
@@ -576,19 +564,19 @@ export function OrdersPage() {
               })}
               {orders.isError ? (
                 <tr>
-                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={17}>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={15}>
                     Unable to load orders. Check API connectivity and try refresh.
                   </td>
                 </tr>
               ) : orders.isFetching && !rows.length ? (
                 <tr>
-                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={17}>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={15}>
                     Loading orders…
                   </td>
                 </tr>
               ) : !rows.length && !orders.isFetching ? (
                 <tr>
-                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={17}>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={15}>
                     No orders yet. Place one from Search.
                   </td>
                 </tr>
