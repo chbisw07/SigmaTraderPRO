@@ -84,12 +84,15 @@ function formatPlacedAt(value: string | null): string {
   if (Number.isNaN(d.getTime())) return '—'
   // Compact, single-line, locale-aware timestamp (no seconds).
   return d
-    .toLocaleString(undefined, {
+    .toLocaleString('en-GB', {
+      timeZone: 'Asia/Kolkata',
       year: '2-digit',
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
     })
     .replace(',', '')
 }
@@ -525,7 +528,7 @@ export function OrdersPage() {
           <table className="w-full table-fixed text-[13px]">
             <thead className="text-xs text-muted-foreground">
               <tr className="border-b">
-                <th className="w-[124px] px-3 py-2 text-left">Time</th>
+                <th className="w-[150px] px-3 py-2 text-left">Time</th>
                 <th className="w-[280px] px-3 py-2 text-left">Symbol</th>
                 <th className="w-[72px] px-3 py-2 text-left">Side</th>
                 <th className="w-[84px] px-3 py-2 text-left">Broker</th>

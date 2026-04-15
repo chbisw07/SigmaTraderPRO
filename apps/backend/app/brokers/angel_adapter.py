@@ -21,7 +21,7 @@ from app.brokers.types import BrokerKey, BrokerSessionState, BrokerStatus
 from app.core.config import settings
 from app.core.crypto import CryptoError, decrypt_json, encrypt_json
 from app.core.logger import get_logger, log_event
-from app.core.time import today_ist
+from app.core.time import IST, today_ist
 from app.models.broker_connection import BrokerConnection
 from app.models.user import User
 from app.orders.types import (
@@ -73,7 +73,10 @@ def _parse_order_timestamp(ts: object) -> datetime | None:
         fixed = s.replace("Z", "+00:00")
         if " " in fixed and "T" not in fixed:
             fixed = fixed.replace(" ", "T", 1)
-        return datetime.fromisoformat(fixed)
+        dt = datetime.fromisoformat(fixed)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=IST).astimezone(UTC)
+        return dt
     except Exception:
         pass
 
@@ -91,7 +94,8 @@ def _parse_order_timestamp(ts: object) -> datetime | None:
         "%d %b %Y %H:%M",
     ):
         try:
-            return datetime.strptime(s, fmt)
+            dt = datetime.strptime(s, fmt)
+            return dt.replace(tzinfo=IST).astimezone(UTC)
         except Exception:
             continue
 
