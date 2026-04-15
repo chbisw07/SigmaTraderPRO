@@ -15,12 +15,13 @@ from app.brokers.types import BrokerKey
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import get_db
+from app.instruments.types import Exchange
 from app.main import app
 from app.models.base import Base
 from app.models.instrument import Instrument
 from app.models.instrument_mapping import InstrumentMapping
 from app.models.user import User
-from app.services.instrument_normalizer import normalize_zerodha_instrument
+from app.services.instrument_normalizer import normalize_angel_instrument, normalize_zerodha_instrument
 from app.services.instrument_registry_service import instrument_registry_service
 from app.services.instrument_sync_service import instrument_sync_service
 
@@ -107,7 +108,7 @@ def test_sync_idempotent_and_search_api(
             "instrumenttype": "OPTIDX",
             "token": "2001",
             "expiry": "25APR2026",
-            "strike": "23100",
+            "strike": "2310000",
             "optiontype": "CE",
             "lotsize": "50",
             "tick_size": "0.05",
@@ -209,7 +210,7 @@ def test_sync_idempotent_and_search_api(
     )
     assert strikes.status_code == 200
     strike_data = strikes.json()
-    assert strike_data["strikes"] == [23100.0]
+    assert strike_data["strikes"] == [2310000.0]
 
     option_chain = client.get(
         "/api/v1/instruments/derivatives/options",
@@ -224,7 +225,7 @@ def test_sync_idempotent_and_search_api(
     assert option_chain.status_code == 200
     option_items = option_chain.json()["items"]
     assert len(option_items) == 1
-    assert option_items[0]["strike"] == 23100.0
+    assert option_items[0]["strike"] == 2310000.0
     assert option_items[0]["option_type"] == "CE"
 
     mapping = instrument_registry_service.resolve_for_broker(
@@ -234,6 +235,66 @@ def test_sync_idempotent_and_search_api(
     )
     assert mapping is not None
     assert mapping.broker_trading_symbol == "INFY-EQ"
+
+
+def test_angel_sync_allows_duplicate_tokens_across_exchange_segments(
+    db_session: Session,
+) -> None:
+    rows = [
+        {
+            "exch_seg": "NSE",
+            "symbol": "INFY-EQ",
+            "name": "INFY",
+            "instrumenttype": "EQ",
+            "token": "1594",
+            "lotsize": "1",
+            "tick_size": "0.05",
+            "isin": "INE009A01021",
+        },
+        {
+            "exch_seg": "BSE",
+            "symbol": "INFY-EQ",
+            "name": "INFY",
+            "instrumenttype": "EQ",
+            "token": "1594",
+            "lotsize": "1",
+            "tick_size": "0.05",
+            "isin": "INE009A01021",
+        },
+    ]
+
+    result = instrument_sync_service.sync_angel_rows(db_session, rows)
+    assert result.ingested == 2
+
+    mappings = (
+        db_session.query(InstrumentMapping)
+        .filter(InstrumentMapping.broker_key == BrokerKey.angel.value)
+        .all()
+    )
+    broker_ids = {m.broker_instrument_id for m in mappings}
+    assert broker_ids == {"NSE:1594", "BSE:1594"}
+
+
+def test_normalize_angel_bfo_option_maps_to_bse_fno() -> None:
+    row = {
+        "exch_seg": "BFO",
+        "symbol": "SENSEX26JUN66300CE",
+        "name": "SENSEX",
+        "instrumenttype": "OPTIDX",
+        "token": "1100386",
+        "expiry": "25JUN2026",
+        "strike": "6630000.000000",
+        "optiontype": "CE",
+        "lotsize": "20",
+        "tick_size": "0.05",
+    }
+    normalized = normalize_angel_instrument(row)
+    assert normalized is not None
+    assert normalized.exchange == Exchange.BSE_FNO
+    assert normalized.broker_instrument_id == "BFO:1100386"
+    # Display strike should be human (66300), while stored strike remains scaled.
+    assert "66300" in normalized.display_symbol
+    assert normalized.strike == 6630000.0
 
 
 def test_sync_endpoint_validates_payload(

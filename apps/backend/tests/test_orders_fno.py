@@ -215,7 +215,7 @@ def test_fno_preview_option_derives_quantity_from_lots(
         db_session,
         inst=inst,
         broker_key="angel",
-        broker_instrument_id="1594",
+        broker_instrument_id="NFO:1594",
         broker_trading_symbol="NIFTY05MAY2620100CE",
     )
 
@@ -254,7 +254,7 @@ def test_fno_preview_future_requires_no_strike(
         db_session,
         inst=inst,
         broker_key="angel",
-        broker_instrument_id="26000",
+        broker_instrument_id="NFO:26000",
         broker_trading_symbol="NIFTY26MAYFUT",
     )
 
@@ -287,7 +287,7 @@ def test_fno_create_places_order_with_mocked_angel(
         db_session,
         inst=inst,
         broker_key="angel",
-        broker_instrument_id="20001",
+        broker_instrument_id="NFO:20001",
         broker_trading_symbol="NIFTY05MAY2620200PE",
     )
 
@@ -398,7 +398,7 @@ def test_fno_rejects_invalid_product(db_session: Session, client: TestClient) ->
         db_session,
         inst=inst,
         broker_key="angel",
-        broker_instrument_id="1594",
+        broker_instrument_id="NFO:1594",
         broker_trading_symbol="NIFTY05MAY2620100CE",
     )
 

@@ -126,7 +126,7 @@ def _ensure_equity_instrument(db: Session) -> Instrument:
         InstrumentMapping(
             instrument_id=inst.id,
             broker_key="angel",
-            broker_instrument_id="1594",
+            broker_instrument_id="NSE:1594",
             broker_trading_symbol="INFY-EQ",
             raw={},
             is_active=True,

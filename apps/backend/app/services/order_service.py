@@ -6,6 +6,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from app.brokers.angel_client import AngelOrderError
+from app.brokers.angel_instrument_id import decode_angel_instrument_id
 from app.brokers.types import BrokerKey
 from app.brokers.zerodha_client import ZerodhaOrderError
 from app.instruments.types import Exchange, InstrumentType, OptionType
@@ -253,11 +254,13 @@ def _resolve_contract(
             )
         if not mapping.broker_trading_symbol:
             raise OrderValidationError("Angel mapping missing trading symbol")
+        decoded = decode_angel_instrument_id(mapping.broker_instrument_id)
+        token = decoded.token if decoded else str(mapping.broker_instrument_id)
         exchange = "NSE" if instrument.exchange == "NSE_EQ" else "BSE"
         return BrokerEquityContract(
             exchange=exchange,
             trading_symbol=str(mapping.broker_trading_symbol),
-            symbol_token=str(mapping.broker_instrument_id),
+            symbol_token=str(token),
         )
 
     # Zerodha supports orders via exchange+tradingsymbol.
@@ -288,10 +291,13 @@ def _resolve_derivative_contract(
             raise OrderValidationError("Angel mapping missing instrument token")
         if not mapping.broker_trading_symbol:
             raise OrderValidationError("Angel mapping missing trading symbol")
+        decoded = decode_angel_instrument_id(mapping.broker_instrument_id)
+        token = decoded.token if decoded else str(mapping.broker_instrument_id)
+        exchange = "BFO" if instrument.exchange == Exchange.BSE_FNO.value else "NFO"
         return BrokerDerivativeContract(
-            exchange="NFO",
+            exchange=exchange,
             trading_symbol=str(mapping.broker_trading_symbol),
-            symbol_token=str(mapping.broker_instrument_id),
+            symbol_token=str(token),
         )
 
     if not mapping.broker_trading_symbol:
@@ -316,27 +322,31 @@ def _find_derivative_instrument(
     if not normalized:
         return None
 
-    qry = (
-        db.query(Instrument)
-        .filter(Instrument.is_active.is_(True))
-        .filter(Instrument.exchange == Exchange.NSE_FNO.value)
-        .filter(Instrument.instrument_type == instrument_type.value)
-        .filter(Instrument.underlying == normalized)
-        .filter(Instrument.expiry == expiry)
-    )
-
-    if instrument_type == InstrumentType.OPTION:
-        if strike is None or option_type is None:
-            return None
-        qry = qry.filter(Instrument.strike == strike).filter(
-            Instrument.option_type == option_type.value
-        )
-    else:
-        qry = qry.filter(Instrument.strike.is_(None)).filter(
-            Instrument.option_type.is_(None)
+    def _try_exchange(exchange: Exchange) -> Instrument | None:
+        qry = (
+            db.query(Instrument)
+            .filter(Instrument.is_active.is_(True))
+            .filter(Instrument.exchange == exchange.value)
+            .filter(Instrument.instrument_type == instrument_type.value)
+            .filter(Instrument.underlying == normalized)
+            .filter(Instrument.expiry == expiry)
         )
 
-    return qry.one_or_none()
+        if instrument_type == InstrumentType.OPTION:
+            if strike is None or option_type is None:
+                return None
+            qry = qry.filter(Instrument.strike == strike).filter(
+                Instrument.option_type == option_type.value
+            )
+        else:
+            qry = qry.filter(Instrument.strike.is_(None)).filter(
+                Instrument.option_type.is_(None)
+            )
+
+        return qry.one_or_none()
+
+    # Prefer NSE F&O, but allow BSE F&O (e.g. SENSEX options on BFO).
+    return _try_exchange(Exchange.NSE_FNO) or _try_exchange(Exchange.BSE_FNO)
 
 
 class OrderService:

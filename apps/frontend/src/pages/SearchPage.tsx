@@ -535,7 +535,7 @@ export function SearchPage() {
                   i.segment === 'EQUITY' &&
                   (i.instrument_type === 'EQUITY' || i.instrument_type === 'ETF')
                 const canFnoTrade =
-                  i.exchange === 'NSE_FNO' &&
+                  (i.exchange === 'NSE_FNO' || i.exchange === 'BSE_FNO') &&
                   (i.instrument_type === 'OPTION' || i.instrument_type === 'FUTURE')
                 return (
                   <div key={i.canonical_id} className="flex flex-wrap items-center justify-between gap-3 p-3">

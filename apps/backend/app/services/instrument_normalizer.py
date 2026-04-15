@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from app.brokers.angel_instrument_id import encode_angel_instrument_id, normalize_angel_exch_seg
 from app.brokers.types import BrokerKey
 from app.instruments.types import Exchange, InstrumentType, OptionType, Segment
 
@@ -91,6 +92,32 @@ def _parse_float(value: Any) -> float | None:
         return None
 
 
+def _strike_to_paise(value: Any) -> float | None:
+    strike = _parse_float(value)
+    if strike is None:
+        return None
+    if strike <= 0:
+        return None
+    # Canonical registry stores strikes in "paise" units (x100) for F&O.
+    # Keep it stable across brokers to enable mapping joins.
+    if strike < 100000:
+        return float(Decimal(str(strike)) * Decimal("100"))
+    return float(strike)
+
+
+def _strike_for_display(strike_paise: float | None) -> float | None:
+    if strike_paise is None:
+        return None
+    try:
+        v = float(strike_paise)
+    except Exception:
+        return strike_paise
+    # Broker masters commonly store strikes scaled by 100. Normalize for UI labels.
+    if v >= 100000:
+        return v / 100.0
+    return v
+
+
 def _guess_option_type(row: dict[str, Any]) -> OptionType | None:
     raw = (row.get("optiontype") or row.get("option_type") or "").strip()
     if raw in {"CE", "PE"}:
@@ -155,7 +182,7 @@ def _canonical_id(
 
 
 def normalize_angel_instrument(row: dict[str, Any]) -> NormalizedInstrument | None:
-    exch_seg = str(row.get("exch_seg") or "").strip().upper()
+    exch_seg = normalize_angel_exch_seg(row.get("exch_seg"))
     token = str(row.get("token") or "").strip()
     if not exch_seg or not token:
         return None
@@ -165,12 +192,16 @@ def normalize_angel_instrument(row: dict[str, Any]) -> NormalizedInstrument | No
     instrumenttype = str(row.get("instrumenttype") or "").strip().upper()
 
     expiry = _parse_date(row.get("expiry"))
-    strike = _parse_float(row.get("strike"))
+    strike_paise = _strike_to_paise(row.get("strike"))
+    strike_display = _strike_for_display(strike_paise)
     opt_type = _guess_option_type(row)
 
     lot_size = _parse_int(row.get("lotsize"))
     tick_size = _parse_float(row.get("tick_size") or row.get("tickSize"))
     isin = str(row.get("isin") or "").strip() or None
+    broker_instrument_id = encode_angel_instrument_id(exch_seg=exch_seg, token=token)
+    if not broker_instrument_id:
+        return None
 
     # Equity
     if exch_seg in {"NSE", "BSE"} and (
@@ -214,14 +245,14 @@ def normalize_angel_instrument(row: dict[str, Any]) -> NormalizedInstrument | No
             isin=isin,
             is_active=True,
             broker_key=BrokerKey.angel,
-            broker_instrument_id=token,
+            broker_instrument_id=broker_instrument_id,
             broker_trading_symbol=symbol or None,
             raw=_json_safe(row),
         )
 
-    # Derivatives (Angel uses NFO for F&O)
-    if exch_seg in {"NFO", "NSEFO", "NFOFO"}:
-        exchange = Exchange.NSE_FNO
+    # Derivatives
+    if exch_seg in {"NFO", "BFO"}:
+        exchange = Exchange.NSE_FNO if exch_seg == "NFO" else Exchange.BSE_FNO
         if instrumenttype.startswith("FUT"):
             segment = Segment.FUTURE
             inst_type = InstrumentType.FUTURE
@@ -239,7 +270,7 @@ def normalize_angel_instrument(row: dict[str, Any]) -> NormalizedInstrument | No
             instrument_type=inst_type,
             symbol_root=symbol_root,
             expiry=expiry,
-            strike=strike,
+            strike=strike_display,
             option_type=opt_type,
         )
         canonical = _canonical_id(
@@ -248,7 +279,7 @@ def normalize_angel_instrument(row: dict[str, Any]) -> NormalizedInstrument | No
             instrument_type=inst_type,
             symbol_root=symbol_root,
             expiry=expiry,
-            strike=strike,
+            strike=strike_paise,
             option_type=opt_type,
         )
         return NormalizedInstrument(
@@ -260,14 +291,14 @@ def normalize_angel_instrument(row: dict[str, Any]) -> NormalizedInstrument | No
             display_symbol=display,
             underlying=symbol_root,
             expiry=expiry,
-            strike=strike,
+            strike=strike_paise,
             option_type=opt_type if inst_type == InstrumentType.OPTION else None,
             lot_size=lot_size,
             tick_size=tick_size,
             isin=None,
             is_active=True,
             broker_key=BrokerKey.angel,
-            broker_instrument_id=token,
+            broker_instrument_id=broker_instrument_id,
             broker_trading_symbol=symbol or None,
             raw=_json_safe(row),
         )
@@ -292,19 +323,6 @@ def _parse_zerodha_expiry(value: Any) -> date | None:
     except Exception:
         return None
     return None
-
-
-def _strike_to_paise(value: Any) -> float | None:
-    strike = _parse_float(value)
-    if strike is None:
-        return None
-    if strike <= 0:
-        return None
-    # Canonical registry currently stores strikes in "paise" units (x100) for NFO.
-    # Keep it stable across brokers to enable mapping joins.
-    if strike < 100000:
-        return float(Decimal(str(strike)) * Decimal("100"))
-    return float(strike)
 
 
 def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | None:

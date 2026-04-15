@@ -4,6 +4,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from app.brokers.angel_instrument_id import (
+    decode_angel_instrument_id,
+    encode_angel_instrument_id,
+    normalize_angel_exch_seg,
+)
 from app.brokers.angel_client import (
     AngelAuthError,
     AngelOrderBookError,
@@ -519,6 +524,10 @@ class AngelAdapter(BrokerAdapter):
             symbol_token = row.get("symboltoken") or row.get("symbolToken")
             exchange = row.get("exchange") or row.get("exch_seg")
 
+            broker_instrument_id = encode_angel_instrument_id(
+                exch_seg=exchange, token=str(symbol_token) if symbol_token else None
+            )
+
             ts = (
                 row.get("updatetime")
                 or row.get("updateTime")
@@ -565,7 +574,8 @@ class AngelAdapter(BrokerAdapter):
                     ),
                     exchange=str(exchange) if exchange else None,
                     trading_symbol=str(trading_symbol) if trading_symbol else None,
-                    broker_instrument_id=str(symbol_token) if symbol_token else None,
+                    broker_instrument_id=broker_instrument_id
+                    or (str(symbol_token) if symbol_token else None),
                     placed_at=placed_at,
                     side=str(
                         row.get("transactiontype") or row.get("transactionType") or ""
@@ -620,6 +630,10 @@ class AngelAdapter(BrokerAdapter):
             symbol_token = row.get("symboltoken") or row.get("symbolToken")
             exchange = row.get("exchange") or row.get("exch_seg")
             broker_position_id = row.get("positionid") or row.get("positionId")
+
+            broker_instrument_id = encode_angel_instrument_id(
+                exch_seg=exchange, token=str(symbol_token) if symbol_token else None
+            )
 
             net_qty = 0
             try:
@@ -680,7 +694,8 @@ class AngelAdapter(BrokerAdapter):
                     ),
                     exchange=str(exchange) if exchange else None,
                     trading_symbol=str(trading_symbol) if trading_symbol else None,
-                    broker_instrument_id=str(symbol_token) if symbol_token else None,
+                    broker_instrument_id=broker_instrument_id
+                    or (str(symbol_token) if symbol_token else None),
                     net_quantity=net_qty,
                     avg_price=avg_price,
                     last_price=last_price,
@@ -720,8 +735,9 @@ class AngelAdapter(BrokerAdapter):
         # Preserve insertion order to help stable UI rendering.
         ordered: list[BrokerQuoteRequest] = []
         for req in requests:
-            token = str(req.broker_instrument_id or "").strip()
-            exch = str(req.exchange or "").strip().upper()
+            decoded = decode_angel_instrument_id(req.broker_instrument_id)
+            token = decoded.token if decoded else str(req.broker_instrument_id or "").strip()
+            exch = normalize_angel_exch_seg(req.exchange) or str(req.exchange or "").strip().upper()
             if not token or not exch:
                 continue
             exchange_tokens.setdefault(exch, []).append(token)
@@ -765,7 +781,8 @@ class AngelAdapter(BrokerAdapter):
 
         out: list[ExternalBrokerQuote] = []
         for req in ordered:
-            token = str(req.broker_instrument_id or "").strip()
+            decoded = decode_angel_instrument_id(req.broker_instrument_id)
+            token = decoded.token if decoded else str(req.broker_instrument_id or "").strip()
             row = by_token.get(token)
             last_price = None
             prev_close = None

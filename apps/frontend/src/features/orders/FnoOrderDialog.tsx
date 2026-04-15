@@ -129,6 +129,11 @@ export function FnoOrderDialog({ open, onOpenChange, launch, intentSubmit }: Pro
   const [optionType, setOptionType] = useState<'CE' | 'PE'>(initialOptionType)
   const [strike, setStrike] = useState<number | null>(initialStrike)
 
+  const derivativeExchange = useMemo<instrumentsApi.Exchange>(() => {
+    const u = underlying.trim().toUpperCase()
+    return u === 'SENSEX' ? 'BSE_FNO' : 'NSE_FNO'
+  }, [underlying])
+
   const initialSide: ordersApi.OrderSide = prefillEntry?.side ?? contractPrefill?.side ?? manualPrefill?.side ?? 'BUY'
   const initialLots = prefillEntry?.lots ?? contractPrefill?.lots ?? 1
   const initialProduct: 'MIS' | 'NRML' =
@@ -195,12 +200,12 @@ export function FnoOrderDialog({ open, onOpenChange, launch, intentSubmit }: Pro
     const u = underlying.trim().toUpperCase()
     if (!u || !expiry) return null
     if (instrumentType === 'FUTURE') {
-      return `NSE_FNO:FUTURE:FUTURE:${u}:${expiry}`
+      return `${derivativeExchange}:FUTURE:FUTURE:${u}:${expiry}`
     }
     if (strike === null) return null
     const strikeTxt = Number.isInteger(strike) ? String(Math.trunc(strike)) : `${strike}`
-    return `NSE_FNO:OPTION:OPTION:${u}:${expiry}:${strikeTxt}:${optionType}`
-  }, [expiry, instrumentType, optionType, strike, underlying])
+    return `${derivativeExchange}:OPTION:OPTION:${u}:${expiry}:${strikeTxt}:${optionType}`
+  }, [derivativeExchange, expiry, instrumentType, optionType, strike, underlying])
 
   const launchReferencePrice =
     launch.mode === 'contract' ? (launch.referencePrice ?? null) : null
@@ -261,12 +266,12 @@ export function FnoOrderDialog({ open, onOpenChange, launch, intentSubmit }: Pro
   const schemaError = backendReady.data?.schema?.error ?? null
 
   const expiries = useQuery({
-    queryKey: ['derivatives', 'expiries', underlying, instrumentType],
+    queryKey: ['derivatives', 'expiries', derivativeExchange, underlying, instrumentType],
     queryFn: async () => {
       if (!accessToken) throw new Error('Not authenticated')
       return instrumentsApi.derivativeExpiries(accessToken, {
         underlying: underlying.trim(),
-        exchange: 'NSE_FNO',
+        exchange: derivativeExchange,
         instrument_type: instrumentType,
         limit: 50,
       })
@@ -275,13 +280,13 @@ export function FnoOrderDialog({ open, onOpenChange, launch, intentSubmit }: Pro
   })
 
   const strikes = useQuery({
-    queryKey: ['derivatives', 'strikes', underlying, expiry, optionType],
+    queryKey: ['derivatives', 'strikes', derivativeExchange, underlying, expiry, optionType],
     queryFn: async () => {
       if (!accessToken) throw new Error('Not authenticated')
       return instrumentsApi.derivativeStrikes(accessToken, {
         underlying: underlying.trim(),
         expiry,
-        exchange: 'NSE_FNO',
+        exchange: derivativeExchange,
         option_type: optionType,
         limit: 800,
       })

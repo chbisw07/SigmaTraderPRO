@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logger import get_logger, log_event
+from app.brokers.angel_instrument_id import normalize_angel_exch_seg, encode_angel_instrument_id
 from app.services.instrument_normalizer import (
     normalize_angel_instrument,
     normalize_zerodha_instrument,
@@ -131,7 +132,7 @@ class InstrumentSyncService:
             if not isinstance(row, dict):
                 continue
 
-            exch_seg = str(row.get("exch_seg") or "").strip().upper()
+            exch_seg = normalize_angel_exch_seg(row.get("exch_seg")) or ""
             instrumenttype = str(row.get("instrumenttype") or "").strip().upper()
             symbol = str(row.get("symbol") or "")
 
@@ -141,7 +142,7 @@ class InstrumentSyncService:
                 if instrumenttype not in {"EQ", "EQUITY"} and "-EQ" not in symbol:
                     continue
             elif scope_key == "fno_underlyings":
-                if exch_seg not in {"NFO", "NSEFO", "NFOFO"}:
+                if exch_seg not in {"NFO", "BFO"}:
                     continue
                 name = str(row.get("name") or "").strip().upper()
                 if name not in underlyings_set:
@@ -270,12 +271,22 @@ class InstrumentSyncService:
         Used for on-demand mapping when a position exists but the instrument is
         not yet present in the local registry.
         """
-        wanted = {
-            str(t).strip()
-            for t in instrument_tokens
-            if isinstance(t, str) and str(t).strip()
-        }
+        wanted: set[str] = set()
+        wanted_tokens: set[str] = set()
+        for t in instrument_tokens:
+            if not isinstance(t, str):
+                continue
+            raw = str(t).strip()
+            if not raw:
+                continue
+            if ":" in raw:
+                wanted.add(raw.upper())
+            else:
+                wanted_tokens.add(raw)
         if not wanted:
+            # Fall back to raw token matches (less precise).
+            wanted = set()
+        if not wanted and not wanted_tokens:
             raise ValueError("instrument_tokens is required for angel token sync")
 
         url = settings.angel_instrument_master_url
@@ -293,7 +304,16 @@ class InstrumentSyncService:
             token = row.get("token")
             if token is None:
                 continue
-            if str(token).strip() not in wanted:
+            token_s = str(token).strip()
+            exch_seg = normalize_angel_exch_seg(row.get("exch_seg"))
+            composite = encode_angel_instrument_id(exch_seg=exch_seg, token=token_s)
+            if composite:
+                if composite.upper() in wanted:
+                    selected.append(row)
+                    if max_rows and len(selected) >= max_rows:
+                        break
+                    continue
+            if token_s not in wanted_tokens:
                 continue
             selected.append(row)
             if max_rows and len(selected) >= max_rows:
