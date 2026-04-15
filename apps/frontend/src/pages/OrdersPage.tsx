@@ -49,6 +49,22 @@ function instrumentTitle(i: ordersApi.InstrumentOut | null): string {
   return i.display_symbol
 }
 
+function formatPlacedAt(value: string | null): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  // Compact, single-line, locale-aware timestamp (no seconds).
+  return d
+    .toLocaleString(undefined, {
+      year: '2-digit',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    .replace(',', '')
+}
+
 export function OrdersPage() {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
@@ -280,88 +296,109 @@ export function OrdersPage() {
         <CardHeader>
           <CardTitle className="text-base">Filters</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          <div className="mr-2 flex items-center gap-1 rounded-md border bg-background p-1">
-            {(['merged', 'internal_only', 'broker_only'] as const).map((m) => (
-              <Button
-                key={m}
-                type="button"
-                size="sm"
-                variant={mode === m ? 'default' : 'ghost'}
-                onClick={() => setMode(m)}
-                disabled={!includeBrokerOrders && m !== 'internal_only'}
-              >
-                {m === 'merged' ? 'Merged' : m === 'internal_only' ? 'Internal only' : 'Broker only'}
-              </Button>
-            ))}
+        <CardContent className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-md border bg-background p-1">
+              {(['merged', 'internal_only', 'broker_only'] as const).map((m) => (
+                <Button
+                  key={m}
+                  type="button"
+                  size="sm"
+                  variant={mode === m ? 'default' : 'ghost'}
+                  onClick={() => setMode(m)}
+                  disabled={!includeBrokerOrders && m !== 'internal_only'}
+                  className="h-7 px-2"
+                >
+                  {m === 'merged' ? 'Merged' : m === 'internal_only' ? 'Internal only' : 'Broker only'}
+                </Button>
+              ))}
+            </div>
+
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search symbol / canonical / broker id / correlation…"
+              className="h-9 w-[360px] max-w-full"
+            />
           </div>
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search symbol / canonical / broker id / correlation…"
-            className="w-80"
-          />
-          <select
-            value={broker}
-            onChange={(e) => {
-              const v = e.target.value
-              if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
-              else setBroker('')
-            }}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All brokers</option>
-            <option value="angel">Angel One</option>
-            <option value="zerodha">Zerodha</option>
-          </select>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All statuses</option>
-            {['ACKNOWLEDGED', 'PENDING', 'OPEN', 'EXECUTED', 'PARTIAL', 'CANCELLED', 'BLOCKED', 'DISPATCH_FAILED', 'REJECTED', 'FAILED', 'SL_EXECUTED', 'TARGET_EXECUTED'].map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <select
-            value={product}
-            onChange={(e) => setProduct(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All products</option>
-            {['CNC', 'MIS', 'NRML'].map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-          <select
-            value={instrumentType}
-            onChange={(e) => setInstrumentType(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All types</option>
-            <option value="EQUITY">Stock/ETF</option>
-            <option value="OPTION">Option</option>
-            <option value="FUTURE">Future</option>
-          </select>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setQ('')
-              setBroker('')
-              setStatus('')
-              setProduct('')
-              setInstrumentType('')
-            }}
-          >
-            Clear
-          </Button>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={broker}
+              onChange={(e) => {
+                const v = e.target.value
+                if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
+                else setBroker('')
+              }}
+              className={cn(
+                'h-9 w-[140px] rounded-md border bg-background px-2 text-sm outline-none',
+                'focus-visible:ring-2 focus-visible:ring-ring',
+              )}
+            >
+              <option value="">All brokers</option>
+              <option value="angel">Angel One</option>
+              <option value="zerodha">Zerodha</option>
+            </select>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className={cn(
+                'h-9 w-[160px] rounded-md border bg-background px-2 text-sm outline-none',
+                'focus-visible:ring-2 focus-visible:ring-ring',
+              )}
+            >
+              <option value="">All statuses</option>
+              {['ACKNOWLEDGED', 'PENDING', 'OPEN', 'EXECUTED', 'PARTIAL', 'CANCELLED', 'BLOCKED', 'DISPATCH_FAILED', 'REJECTED', 'FAILED', 'SL_EXECUTED', 'TARGET_EXECUTED'].map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <select
+              value={product}
+              onChange={(e) => setProduct(e.target.value)}
+              className={cn(
+                'h-9 w-[130px] rounded-md border bg-background px-2 text-sm outline-none',
+                'focus-visible:ring-2 focus-visible:ring-ring',
+              )}
+            >
+              <option value="">All products</option>
+              {['CNC', 'MIS', 'NRML'].map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <select
+              value={instrumentType}
+              onChange={(e) => setInstrumentType(e.target.value)}
+              className={cn(
+                'h-9 w-[130px] rounded-md border bg-background px-2 text-sm outline-none',
+                'focus-visible:ring-2 focus-visible:ring-ring',
+              )}
+            >
+              <option value="">All types</option>
+              <option value="EQUITY">Stock/ETF</option>
+              <option value="OPTION">Option</option>
+              <option value="FUTURE">Future</option>
+            </select>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 px-2 text-muted-foreground"
+              onClick={() => {
+                setQ('')
+                setBroker('')
+                setStatus('')
+                setProduct('')
+                setInstrumentType('')
+              }}
+            >
+              Clear
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -372,26 +409,26 @@ export function OrdersPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed text-[13px]">
             <thead className="text-xs text-muted-foreground">
               <tr className="border-b">
-                <th className="px-3 py-2 text-left">Time</th>
-                <th className="px-3 py-2 text-left">Symbol</th>
-                <th className="px-3 py-2 text-left">Side</th>
-                <th className="px-3 py-2 text-left">Broker</th>
-                <th className="px-3 py-2 text-left">Origin</th>
-                <th className="px-3 py-2 text-left">Recon</th>
-                <th className="px-3 py-2 text-left">Product</th>
-                <th className="px-3 py-2 text-left">Qty/Lots</th>
-                <th className="px-3 py-2 text-left">Type</th>
-                <th className="px-3 py-2 text-left">Placed</th>
-                <th className="px-3 py-2 text-left">Avg</th>
-                <th className="px-3 py-2 text-left">Status</th>
-                <th className="px-3 py-2 text-left">Broker ID</th>
-                <th className="px-3 py-2 text-left">Correlation</th>
-                <th className="px-3 py-2 text-left">Source</th>
-                <th className="px-3 py-2 text-left">PnL</th>
-                <th className="px-3 py-2 text-right">Actions</th>
+                <th className="w-[124px] px-3 py-2 text-left">Time</th>
+                <th className="w-[280px] px-3 py-2 text-left">Symbol</th>
+                <th className="w-[72px] px-3 py-2 text-left">Side</th>
+                <th className="w-[84px] px-3 py-2 text-left">Broker</th>
+                <th className="w-[76px] px-3 py-2 text-left">Product</th>
+                <th className="w-[96px] px-3 py-2 text-right">Qty/Lots</th>
+                <th className="w-[84px] px-3 py-2 text-left">Type</th>
+                <th className="w-[86px] px-3 py-2 text-right">Placed</th>
+                <th className="w-[74px] px-3 py-2 text-right">Avg</th>
+                <th className="w-[160px] px-3 py-2 text-left">Status</th>
+                <th className="w-[92px] px-3 py-2 text-left">Origin</th>
+                <th className="w-[92px] px-3 py-2 text-left">Recon</th>
+                <th className="w-[160px] px-3 py-2 text-left">Broker ID</th>
+                <th className="w-[190px] px-3 py-2 text-left">Correlation</th>
+                <th className="w-[130px] px-3 py-2 text-left">Source</th>
+                <th className="w-[70px] px-3 py-2 text-right">PnL</th>
+                <th className="w-[300px] px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -401,26 +438,39 @@ export function OrdersPage() {
                 const title = o.instrument ? instrumentTitle(o.instrument) : (o.symbol_display ?? '—')
                 const kind = o.instrument?.instrument_type ?? (o.canonical_id ? '—' : '—')
                 const sideCls = o.side === 'BUY' ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'
+                const symbolTooltip = [
+                  title !== '—' ? title : null,
+                  o.canonical_id ? `Canonical: ${o.canonical_id}` : null,
+                  o.broker_order_id ? `Broker ID: ${o.broker_order_id}` : null,
+                  o.correlation_id ? `Correlation: ${o.correlation_id}` : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n')
+                const sourceLabel = o.source ?? '—'
+                const sourceFull = o.intent_type ? `${sourceLabel} · ${o.intent_type}` : sourceLabel
                 return (
                   <tr key={o.row_id} className="hover:bg-accent/20">
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{o.placed_at ? new Date(o.placed_at).toLocaleString() : '—'}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <div className="font-medium">{title}</div>
-                        {kind !== '—' ? <Badge variant="outline">{kind}</Badge> : null}
+                    <td className="px-3 py-1.5 text-xs text-muted-foreground whitespace-nowrap">{formatPlacedAt(o.placed_at)}</td>
+                    <td className="px-3 py-1.5">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="min-w-0 truncate font-medium leading-tight" title={symbolTooltip || undefined}>
+                          {title}
+                        </div>
+                        {kind !== '—' ? (
+                          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] text-muted-foreground">
+                            {kind}
+                          </Badge>
+                        ) : null}
                       </div>
-                      <div className="mt-0.5 break-all text-[11px] text-muted-foreground">{o.canonical_id ?? '—'}</div>
                     </td>
-                    <td className={cn('px-3 py-2 font-medium', sideCls)}>{o.side ?? '—'}</td>
-                    <td className="px-3 py-2">{o.broker}</td>
-                    <td className="px-3 py-2"><Badge variant="outline">{o.source_origin}</Badge></td>
-                    <td className="px-3 py-2"><Badge variant="outline">{o.reconciliation_state}</Badge></td>
-                    <td className="px-3 py-2">{o.product ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{o.lots != null ? `${formatQty(o.lots)} lots` : formatQty(o.quantity)}</td>
-                    <td className="px-3 py-2">{o.order_type ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatNumber(o.placed_price)}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatNumber(o.avg_price)}</td>
-                    <td className="px-3 py-2">
+                    <td className={cn('px-3 py-1.5 font-medium whitespace-nowrap', sideCls)}>{o.side ?? '—'}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">{o.broker}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">{o.product ?? '—'}</td>
+                    <td className="px-3 py-1.5 tabular-nums text-right whitespace-nowrap">{o.lots != null ? `${formatQty(o.lots)} lots` : formatQty(o.quantity)}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">{o.order_type ?? '—'}</td>
+                    <td className="px-3 py-1.5 tabular-nums text-right whitespace-nowrap">{formatNumber(o.placed_price)}</td>
+                    <td className="px-3 py-1.5 tabular-nums text-right whitespace-nowrap">{formatNumber(o.avg_price)}</td>
+                    <td className="px-3 py-1.5">
                       <StatusBadge status={o.status} />
                       {o.blocked_reason_message ? (
                         <div className="mt-1 max-w-[260px] truncate text-[11px] text-amber-800 dark:text-amber-200">
@@ -432,23 +482,58 @@ export function OrdersPage() {
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{o.broker_order_id ?? '—'}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {o.correlation_id ? <span className="font-mono">{o.correlation_id}</span> : '—'}
+                    <td className="px-3 py-1.5">
+                      <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+                        {o.source_origin}
+                      </Badge>
                     </td>
-                    <td className="px-3 py-2">
-                      <div className="text-xs">{o.source ?? '—'}</div>
-                      <div className="text-[11px] text-muted-foreground">{o.intent_type ?? '—'}</div>
+                    <td className="px-3 py-1.5">
+                      <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+                        {o.reconciliation_state}
+                      </Badge>
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">—</td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="flex justify-end gap-2">
+                    <td className="px-3 py-1.5 text-xs text-muted-foreground">
+                      <div className="truncate font-mono" title={o.broker_order_id ?? undefined}>
+                        {o.broker_order_id ?? '—'}
+                      </div>
+                    </td>
+                    <td className="px-3 py-1.5 text-xs text-muted-foreground">
+                      {o.correlation_id ? (
+                        <div className="truncate font-mono" title={o.correlation_id}>
+                          {o.correlation_id}
+                        </div>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5 text-xs text-muted-foreground">
+                      <div className="truncate" title={sourceFull !== '—' ? sourceFull : undefined}>
+                        {sourceFull}
+                      </div>
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-xs text-muted-foreground">—</td>
+                    <td className="px-3 py-1.5 text-right">
+                      <div className="flex justify-end gap-1.5">
                         {internalId != null ? (
                           <>
-                            <Button type="button" size="sm" variant="outline" onClick={() => void onRepeat(internalId)} disabled={busy}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void onRepeat(internalId)}
+                              disabled={busy}
+                            >
                               {busy ? '…' : 'Repeat'}
                             </Button>
-                            <Button type="button" size="sm" variant="outline" onClick={() => void onReverse(internalId)} disabled={busy}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void onReverse(internalId)}
+                              disabled={busy}
+                            >
                               Reverse
                             </Button>
                             {o.linked_position_id ? (
@@ -456,6 +541,7 @@ export function OrdersPage() {
                                 type="button"
                                 size="sm"
                                 variant="outline"
+                                className="h-7 px-2 text-[11px]"
                                 onClick={() => void onExitLinkedPosition(o.linked_position_id!, internalId)}
                                 disabled={busy}
                               >
@@ -463,7 +549,7 @@ export function OrdersPage() {
                               </Button>
                             ) : null}
                             {o.linked_position_id ? (
-                              <Button type="button" size="sm" variant="outline" onClick={() => navigate('/positions')}>
+                              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => navigate('/positions')}>
                                 Position
                               </Button>
                             ) : null}
@@ -471,6 +557,7 @@ export function OrdersPage() {
                               type="button"
                               size="sm"
                               variant="outline"
+                              className="h-7 px-2 text-[11px]"
                               onClick={() => {
                                 setPayloadOrderId(internalId)
                                 setPayloadOpen(true)
