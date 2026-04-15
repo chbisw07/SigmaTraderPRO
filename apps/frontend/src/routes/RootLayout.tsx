@@ -81,8 +81,8 @@ export function RootLayout() {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <main className="flex-1 min-h-0 overflow-hidden p-4">
-            <div className="h-full min-h-0 overflow-auto rounded-xl border bg-card shadow-sm p-4">
+          <main className="flex-1 min-h-0 overflow-hidden p-3">
+            <div className="h-full min-h-0 overflow-auto rounded-xl border bg-card shadow-sm p-3">
               <Outlet />
             </div>
           </main>
