@@ -1,12 +1,14 @@
 import { type ComponentProps, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useMutation } from '@tanstack/react-query'
+import { SlidersHorizontal } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { formatMoney, formatNumber, formatQty, formatStrikeHuman } from '@/lib/format'
 import { useAuthStore } from '@/store/authStore'
@@ -37,6 +39,16 @@ export function PositionsPage() {
   const [q, setQ] = useState(() => searchParams.get('q') ?? '')
   const [broker, setBroker] = useState<ordersApi.BrokerKey | ''>('')
   const [instrumentType, setInstrumentType] = useState<string>('')
+
+  const activeFilterCount = useMemo(() => {
+    return (q.trim() ? 1 : 0) + (broker ? 1 : 0) + (instrumentType ? 1 : 0)
+  }, [broker, instrumentType, q])
+
+  const clearAllFilters = () => {
+    setQ('')
+    setBroker('')
+    setInstrumentType('')
+  }
 
   useEffect(() => {
     const next = searchParams.get('q') ?? ''
@@ -223,7 +235,76 @@ export function PositionsPage() {
   return (
     <div className="space-y-6">
       <h1 className="sr-only">Positions</h1>
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-3 shadow-sm">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search symbol / canonical id…"
+            className="h-9 w-[420px] max-w-full"
+          />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="h-9">
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+                {activeFilterCount ? (
+                  <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1 text-[11px] font-medium text-foreground">
+                    {activeFilterCount}
+                  </span>
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[520px] max-w-[92vw] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold">Filters</div>
+                <Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs text-muted-foreground" onClick={clearAllFilters}>
+                  Clear all
+                </Button>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground">Broker</div>
+                  <select
+                    value={broker}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
+                      else setBroker('')
+                    }}
+                    className={cn(
+                      'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
+                  >
+                    <option value="">All</option>
+                    <option value="angel">Angel One</option>
+                    <option value="zerodha">Zerodha</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground">Type</div>
+                  <select
+                    value={instrumentType}
+                    onChange={(e) => setInstrumentType(e.target.value)}
+                    className={cn(
+                      'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
+                  >
+                    <option value="">All</option>
+                    <option value="EQUITY">Stock/ETF</option>
+                    <option value="OPTION">Option</option>
+                    <option value="FUTURE">Future</option>
+                  </select>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        <div className="flex items-center gap-2">
           <Button
             type="button"
             variant="outline"
@@ -236,6 +317,7 @@ export function PositionsPage() {
           <Button type="button" variant="outline" size="sm" onClick={() => void positions.refetch()} disabled={positions.isFetching}>
             {positions.isFetching ? 'Refreshing…' : 'Refresh view'}
           </Button>
+        </div>
       </div>
       {banner ? (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
@@ -274,56 +356,6 @@ export function PositionsPage() {
           </CardContent>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Filters</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search symbol / canonical id…" className="w-72" />
-          <select
-            value={broker}
-            onChange={(e) => {
-              const v = e.target.value
-              if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
-              else setBroker('')
-            }}
-            className={cn(
-              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
-              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            )}
-          >
-            <option value="">All brokers</option>
-            <option value="angel">Angel One</option>
-            <option value="zerodha">Zerodha</option>
-          </select>
-          <select
-            value={instrumentType}
-            onChange={(e) => setInstrumentType(e.target.value)}
-            className={cn(
-              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
-              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            )}
-          >
-            <option value="">All types</option>
-            <option value="EQUITY">Stock/ETF</option>
-            <option value="OPTION">Option</option>
-            <option value="FUTURE">Future</option>
-          </select>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setQ('')
-              setBroker('')
-              setInstrumentType('')
-            }}
-          >
-            Clear
-          </Button>
-        </CardContent>
-      </Card>
 
       <div className="rounded-lg border bg-card">
         <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
