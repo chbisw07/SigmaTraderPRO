@@ -1,12 +1,13 @@
 import { type ComponentProps, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { SlidersHorizontal } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { formatNumber, formatQty, formatStrikeHuman } from '@/lib/format'
 import { useAuthStore } from '@/store/authStore'
@@ -119,6 +120,32 @@ export function OrdersPage() {
   useEffect(() => {
     if (!includeBrokerOrders && mode !== 'internal_only') setMode('internal_only')
   }, [includeBrokerOrders, mode])
+
+  const activeFilterCount = useMemo(() => {
+    const defaultMode: ordersApi.OrdersSourceMode = includeBrokerOrders ? 'merged' : 'internal_only'
+    const hasDefaultDates = fromDate === todayYmd && toDate === todayYmd
+    return (
+      (q.trim() ? 1 : 0) +
+      (broker ? 1 : 0) +
+      (status ? 1 : 0) +
+      (product ? 1 : 0) +
+      (instrumentType ? 1 : 0) +
+      (!hasDefaultDates ? 1 : 0) +
+      (mode !== defaultMode ? 1 : 0) +
+      (!includeBrokerOrders ? 1 : 0)
+    )
+  }, [broker, fromDate, includeBrokerOrders, instrumentType, mode, product, q, status, toDate, todayYmd])
+
+  const clearAllFilters = () => {
+    setQ('')
+    setBroker('')
+    setStatus('')
+    setProduct('')
+    setInstrumentType('')
+    setFromDate(todayYmd)
+    setToDate(todayYmd)
+    setMode(includeBrokerOrders ? 'merged' : 'internal_only')
+  }
 
   const orders = useQuery<ordersApi.OrdersWorkspaceResponse>({
     queryKey: ['orders', 'workspace', { q, broker, status, instrumentType, product, mode, includeBrokerOrders }],
@@ -326,22 +353,184 @@ export function OrdersPage() {
   return (
     <div className="space-y-6">
       <h1 className="sr-only">Orders</h1>
-      <div className="flex flex-wrap items-center justify-end gap-2">
-          <label className="flex items-center gap-2 rounded-md border bg-card px-2 py-1 text-sm shadow-sm">
-            <input
-              aria-label="Include broker orders"
-              type="checkbox"
-              checked={includeBrokerOrders}
-              onChange={(e) => void updateIncludeBrokerOrders(e.target.checked)}
-            />
-            <span className="text-xs">Include broker orders</span>
-          </label>
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-3 shadow-sm">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search symbol / canonical / broker id / correlation…"
+            className="h-9 w-[420px] max-w-full"
+          />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="h-9">
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+                {activeFilterCount ? (
+                  <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1 text-[11px] font-medium text-foreground">
+                    {activeFilterCount}
+                  </span>
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[560px] max-w-[92vw] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold">Filters</div>
+                <Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs text-muted-foreground" onClick={clearAllFilters}>
+                  Clear all
+                </Button>
+              </div>
+
+              <div className="mt-3 space-y-4">
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground">Source</div>
+                  <div className="flex items-center gap-1 rounded-md border bg-muted/40 p-1 shadow-sm">
+                    {(['merged', 'internal_only', 'broker_only'] as const).map((m) => (
+                      <Button
+                        key={m}
+                        type="button"
+                        size="sm"
+                        variant={mode === m ? 'default' : 'ghost'}
+                        onClick={() => setMode(m)}
+                        disabled={!includeBrokerOrders && m !== 'internal_only'}
+                        className="h-7 px-2"
+                      >
+                        {m === 'merged' ? 'Merged' : m === 'internal_only' ? 'Internal only' : 'Broker only'}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">From</div>
+                    <Input
+                      type="date"
+                      value={fromDate}
+                      min={dateBounds.earliestYmd || undefined}
+                      max={toDate || todayYmd}
+                      onChange={(e) => setFromDate(e.target.value)}
+                      className="h-9 w-full"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">To</div>
+                    <Input
+                      type="date"
+                      value={toDate}
+                      min={fromDate || dateBounds.earliestYmd || undefined}
+                      max={todayYmd}
+                      onChange={(e) => setToDate(e.target.value)}
+                      className="h-9 w-full"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">Broker</div>
+                    <select
+                      value={broker}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
+                        else setBroker('')
+                      }}
+                      className={cn(
+                        'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
+                    >
+                      <option value="">All</option>
+                      <option value="angel">Angel One</option>
+                      <option value="zerodha">Zerodha</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">Status</div>
+                    <select
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value)}
+                      className={cn(
+                        'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
+                    >
+                      <option value="">All</option>
+                      {['ACKNOWLEDGED', 'PENDING', 'OPEN', 'EXECUTED', 'PARTIAL', 'CANCELLED', 'BLOCKED', 'DISPATCH_FAILED', 'REJECTED', 'FAILED', 'SL_EXECUTED', 'TARGET_EXECUTED'].map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">Product</div>
+                    <select
+                      value={product}
+                      onChange={(e) => setProduct(e.target.value)}
+                      className={cn(
+                        'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
+                    >
+                      <option value="">All</option>
+                      {['CNC', 'MIS', 'NRML'].map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">Type</div>
+                    <select
+                      value={instrumentType}
+                      onChange={(e) => setInstrumentType(e.target.value)}
+                      className={cn(
+                        'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
+                    >
+                      <option value="">All</option>
+                      <option value="EQUITY">Stock/ETF</option>
+                      <option value="OPTION">Option</option>
+                      <option value="FUTURE">Future</option>
+                    </select>
+                  </div>
+                </div>
+
+                <label className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium">Include broker orders</div>
+                    <div className="text-[11px] text-muted-foreground">Show broker orderbook rows alongside internal orders.</div>
+                  </div>
+                  <input
+                    aria-label="Include broker orders"
+                    type="checkbox"
+                    checked={includeBrokerOrders}
+                    onChange={(e) => void updateIncludeBrokerOrders(e.target.checked)}
+                  />
+                </label>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          <div className="hidden xl:flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{fromDate}</span>
+            <span>→</span>
+            <span>{toDate}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => void onReconcile()} disabled={!accessToken}>
             Reconcile
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={() => void orders.refetch()} disabled={orders.isFetching}>
             {orders.isFetching ? 'Refreshing…' : 'Refresh'}
           </Button>
+        </div>
       </div>
       {Object.keys(brokerErrors).length ? (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
@@ -371,143 +560,6 @@ export function OrdersPage() {
           </div>
         </div>
       ) : null}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Filters</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 rounded-md border bg-muted/40 p-1 shadow-sm">
-              {(['merged', 'internal_only', 'broker_only'] as const).map((m) => (
-                <Button
-                  key={m}
-                  type="button"
-                  size="sm"
-                  variant={mode === m ? 'default' : 'ghost'}
-                  onClick={() => setMode(m)}
-                  disabled={!includeBrokerOrders && m !== 'internal_only'}
-                  className="h-7 px-2"
-                >
-                  {m === 'merged' ? 'Merged' : m === 'internal_only' ? 'Internal only' : 'Broker only'}
-                </Button>
-              ))}
-            </div>
-
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search symbol / canonical / broker id / correlation…"
-              className="h-9 w-[360px] max-w-full"
-            />
-
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-muted-foreground">From</div>
-                <Input
-                  type="date"
-                  value={fromDate}
-                  min={dateBounds.earliestYmd || undefined}
-                  max={toDate || todayYmd}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  className="h-9 w-[150px]"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-muted-foreground">To</div>
-                <Input
-                  type="date"
-                  value={toDate}
-                  min={fromDate || dateBounds.earliestYmd || undefined}
-                  max={todayYmd}
-                  onChange={(e) => setToDate(e.target.value)}
-                  className="h-9 w-[150px]"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={broker}
-              onChange={(e) => {
-                const v = e.target.value
-                if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
-                else setBroker('')
-              }}
-              className={cn(
-                'h-9 w-[140px] rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
-                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-              )}
-            >
-              <option value="">All brokers</option>
-              <option value="angel">Angel One</option>
-              <option value="zerodha">Zerodha</option>
-            </select>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              className={cn(
-                'h-9 w-[160px] rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
-                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-              )}
-            >
-              <option value="">All statuses</option>
-              {['ACKNOWLEDGED', 'PENDING', 'OPEN', 'EXECUTED', 'PARTIAL', 'CANCELLED', 'BLOCKED', 'DISPATCH_FAILED', 'REJECTED', 'FAILED', 'SL_EXECUTED', 'TARGET_EXECUTED'].map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            <select
-              value={product}
-              onChange={(e) => setProduct(e.target.value)}
-              className={cn(
-                'h-9 w-[130px] rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
-                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-              )}
-            >
-              <option value="">All products</option>
-              {['CNC', 'MIS', 'NRML'].map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <select
-              value={instrumentType}
-              onChange={(e) => setInstrumentType(e.target.value)}
-              className={cn(
-                'h-9 w-[130px] rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
-                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-              )}
-            >
-              <option value="">All types</option>
-              <option value="EQUITY">Stock/ETF</option>
-              <option value="OPTION">Option</option>
-              <option value="FUTURE">Future</option>
-            </select>
-
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-9 px-2 text-muted-foreground"
-              onClick={() => {
-                setQ('')
-                setBroker('')
-                setStatus('')
-                setProduct('')
-                setInstrumentType('')
-                setFromDate(todayYmd)
-                setToDate(todayYmd)
-              }}
-            >
-              Clear
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
 
       <div className="rounded-lg border bg-card">
         <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
