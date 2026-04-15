@@ -24,7 +24,8 @@ function normalizeIsoForDateParse(value: string): string {
 }
 
 function StatusBadge({ status }: { status: string | null }) {
-  const s = (status ?? '—').toUpperCase()
+  if (!status) return null
+  const s = status.toUpperCase()
   const cls =
     s === 'EXECUTED'
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
@@ -560,7 +561,7 @@ export function OrdersPage() {
                 ]
                   .filter(Boolean)
                   .join('\n')
-                const sourceLabel = o.source ?? '—'
+                const sourceLabel = o.source ?? ''
                 const sourceFull = o.intent_type ? `${sourceLabel} · ${o.intent_type}` : sourceLabel
                 return (
                   <tr key={o.row_id} className="hover:bg-accent/20">
@@ -607,11 +608,13 @@ export function OrdersPage() {
                       </Badge>
                     </td>
                     <td className="px-3 py-1.5 text-xs text-muted-foreground">
-                      <div className="truncate" title={sourceFull !== '—' ? sourceFull : undefined}>
-                        {sourceFull}
-                      </div>
+                      {sourceFull ? (
+                        <div className="truncate" title={sourceFull}>
+                          {sourceFull}
+                        </div>
+                      ) : null}
                     </td>
-                    <td className="px-3 py-1.5 text-right text-xs text-muted-foreground">—</td>
+                    <td className="px-3 py-1.5 text-right text-xs text-muted-foreground" />
                     <td className="px-3 py-1.5 text-right">
                       <div className="flex justify-end gap-1.5">
                         {internalId != null ? (

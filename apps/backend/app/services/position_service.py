@@ -163,9 +163,9 @@ class PositionService:
         try:
             external_positions = adapter.fetch_positions(db, user)
         except (BrokerNotConfiguredError, BrokerError) as exc:
-            return 0, 0, str(exc)
+            return 0, 0, 0, set(), str(exc)
         except Exception:  # noqa: BLE001
-            return 0, 0, f"{broker.value} positionbook fetch failed"
+            return 0, 0, 0, set(), f"{broker.value} positionbook fetch failed"
 
         upserted = 0
         closed = 0

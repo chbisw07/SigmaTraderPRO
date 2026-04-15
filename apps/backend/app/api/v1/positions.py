@@ -267,6 +267,24 @@ def sync_positions(
                 db, user=current_user, broker=b
             )
         )
+        # Best-effort: for Angel, auto-ingest missing instruments by token
+        # and retry once, so positions don't disappear just due to missing mappings.
+        if not err and b.value == "angel" and unmapped_tokens:
+            try:
+                instrument_sync_service.sync_angel_tokens(
+                    db,
+                    instrument_tokens=sorted(unmapped_tokens),
+                )
+                up2, cl2, sk2, _tokens2, err2 = (
+                    position_service.sync_from_broker_positionbook(
+                        db, user=current_user, broker=b
+                    )
+                )
+                if not err2:
+                    upserted, closed, skipped = up2, cl2, sk2
+            except Exception:
+                # Non-blocking: keep original counts.
+                pass
         # Best-effort: for Zerodha, auto-ingest missing NFO instruments by token
         # and retry once, so positions don't disappear just due to missing mappings.
         if not err and b.value == "zerodha" and unmapped_tokens:

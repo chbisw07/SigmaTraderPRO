@@ -257,5 +257,49 @@ class InstrumentSyncService:
 
         return self.sync_zerodha_rows(db, selected)
 
+    def sync_angel_tokens(
+        self,
+        db: Session,
+        *,
+        instrument_tokens: list[str],
+        max_rows: int | None = None,
+    ) -> SyncResult:
+        """
+        Targeted Angel instrument master sync for a specific set of tokens.
+
+        Used for on-demand mapping when a position exists but the instrument is
+        not yet present in the local registry.
+        """
+        wanted = {
+            str(t).strip()
+            for t in instrument_tokens
+            if isinstance(t, str) and str(t).strip()
+        }
+        if not wanted:
+            raise ValueError("instrument_tokens is required for angel token sync")
+
+        url = settings.angel_instrument_master_url
+        timeout = float(settings.angel_http_timeout_seconds)
+        with urlopen(url, timeout=timeout) as resp:
+            data = json.load(resp)
+
+        if not isinstance(data, list):
+            raise ValueError("Angel instrument master payload must be a list")
+
+        selected: list[dict[str, Any]] = []
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            token = row.get("token")
+            if token is None:
+                continue
+            if str(token).strip() not in wanted:
+                continue
+            selected.append(row)
+            if max_rows and len(selected) >= max_rows:
+                break
+
+        return self.sync_angel_rows(db, selected)
+
 
 instrument_sync_service = InstrumentSyncService()
