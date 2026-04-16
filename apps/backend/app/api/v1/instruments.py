@@ -33,6 +33,14 @@ from app.services.instrument_sync_service import (
 router = APIRouter(prefix="/instruments", tags=["instruments"])
 logger = get_logger(__name__)
 
+def _dev_detail(public_message: str, exc: Exception) -> str:
+    env = (settings.app_env or "").strip().lower()
+    if env in {"development", "dev", "local"}:
+        msg = str(exc).strip().replace("\n", " ")
+        msg = msg[:240] if msg else exc.__class__.__name__
+        return f"{public_message}: {exc.__class__.__name__}: {msg}"
+    return public_message
+
 
 @router.get("/search", response_model=InstrumentSearchResponse)
 def search(
@@ -190,7 +198,7 @@ def sync_angel_master(
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Instrument sync failed",
+            detail=_dev_detail("Instrument sync failed", exc),
         ) from exc
 
     return InstrumentSyncResponse(
@@ -285,7 +293,7 @@ def sync_zerodha_nfo(
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Zerodha instrument sync failed",
+            detail=_dev_detail("Zerodha instrument sync failed", exc),
         ) from exc
 
     return InstrumentSyncResponse(

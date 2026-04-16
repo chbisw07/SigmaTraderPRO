@@ -72,19 +72,51 @@ class InstrumentRegistryService:
         broker_trading_symbol: str | None,
         raw: dict[str, Any] | None,
     ) -> InstrumentMapping:
-        existing = (
+        # Mappings are uniquely identified by:
+        # - (broker_key, broker_instrument_id) and
+        # - (broker_key, instrument_id)
+        # A re-sync may legitimately "move" a broker_instrument_id to a different
+        # canonical instrument if our canonical id scheme changes or improves.
+        # To avoid unique constraint violations, always reconcile both keys.
+        by_broker_id = (
+            db.query(InstrumentMapping)
+            .filter(InstrumentMapping.broker_key == broker.value)
+            .filter(InstrumentMapping.broker_instrument_id == broker_instrument_id)
+            .one_or_none()
+        )
+        by_instrument = (
             db.query(InstrumentMapping)
             .filter(InstrumentMapping.instrument_id == instrument.id)
             .filter(InstrumentMapping.broker_key == broker.value)
             .one_or_none()
         )
-        if existing:
-            existing.broker_instrument_id = broker_instrument_id
-            existing.broker_trading_symbol = broker_trading_symbol
-            existing.raw = raw
-            existing.is_active = True
+
+        if by_broker_id and by_instrument and by_broker_id.id != by_instrument.id:
+            # Merge two rows into one. Keep the broker-id keyed row, and delete
+            # the instrument-keyed row to satisfy uq_map_broker_instrument.
+            db.delete(by_instrument)
+            by_broker_id.instrument_id = instrument.id
+            by_broker_id.broker_trading_symbol = broker_trading_symbol
+            by_broker_id.raw = raw
+            by_broker_id.is_active = True
             db.flush()
-            return existing
+            return by_broker_id
+
+        if by_broker_id:
+            by_broker_id.instrument_id = instrument.id
+            by_broker_id.broker_trading_symbol = broker_trading_symbol
+            by_broker_id.raw = raw
+            by_broker_id.is_active = True
+            db.flush()
+            return by_broker_id
+
+        if by_instrument:
+            by_instrument.broker_instrument_id = broker_instrument_id
+            by_instrument.broker_trading_symbol = broker_trading_symbol
+            by_instrument.raw = raw
+            by_instrument.is_active = True
+            db.flush()
+            return by_instrument
 
         mapping = InstrumentMapping(
             instrument_id=instrument.id,

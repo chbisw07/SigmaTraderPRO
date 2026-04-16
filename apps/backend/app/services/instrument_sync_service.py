@@ -53,7 +53,14 @@ class InstrumentSyncService:
             if not normalized:
                 skipped += 1
                 continue
-            instrument_registry_service.ingest_normalized(db, normalized)
+            try:
+                instrument_registry_service.ingest_normalized(db, normalized)
+            except SQLAlchemyError as exc:
+                db.rollback()
+                raise InstrumentSyncDatabaseError(
+                    "Database write failed while syncing instruments. "
+                    "Ensure Postgres is running and reachable."
+                ) from exc
             ingested += 1
             pending += 1
             if pending >= batch_size:
@@ -103,7 +110,14 @@ class InstrumentSyncService:
             if not normalized:
                 skipped += 1
                 continue
-            instrument_registry_service.ingest_normalized(db, normalized)
+            try:
+                instrument_registry_service.ingest_normalized(db, normalized)
+            except SQLAlchemyError as exc:
+                db.rollback()
+                raise InstrumentSyncDatabaseError(
+                    "Database write failed while syncing instruments. "
+                    "Ensure Postgres is running and reachable."
+                ) from exc
             ingested += 1
             pending += 1
             if pending >= batch_size:
