@@ -12,11 +12,17 @@ class AngelInstrumentId:
 _EXCH_NORMALIZE: dict[str, str] = {
     # Equity cash segments
     "NSECM": "NSE",
+    "NSE-CM": "NSE",
+    "NSE_CM": "NSE",
     "BSECM": "BSE",
+    "BSE-CM": "BSE",
+    "BSE_CM": "BSE",
     "NSE_EQ": "NSE",
     "BSE_EQ": "BSE",
     # F&O segments / legacy aliases
     "NSEFO": "NFO",
+    "NSE-FO": "NFO",
+    "NSE_FO": "NFO",
     "NFOFO": "NFO",
     "NSE_FNO": "NFO",
     "BSE_FNO": "BFO",

@@ -626,8 +626,18 @@ class AngelAdapter(BrokerAdapter):
 
         out: list[ExternalBrokerPosition] = []
         for row in rows:
-            trading_symbol = row.get("tradingsymbol") or row.get("tradingSymbol")
-            symbol_token = row.get("symboltoken") or row.get("symbolToken")
+            trading_symbol = (
+                row.get("tradingsymbol")
+                or row.get("tradingSymbol")
+                or row.get("symbol")
+                or row.get("trading_symbol")
+            )
+            symbol_token = (
+                row.get("symboltoken")
+                or row.get("symbolToken")
+                or row.get("token")
+                or row.get("symbol_token")
+            )
             exchange = row.get("exchange") or row.get("exch_seg")
             broker_position_id = row.get("positionid") or row.get("positionId")
 
