@@ -80,8 +80,8 @@ export function SystemEventsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="sr-only">System Events</h1>
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-3 shadow-sm">
+        <h1 className="sr-only">System Events</h1>
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <Input
             value={q}

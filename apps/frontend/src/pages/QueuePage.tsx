@@ -238,9 +238,8 @@ export function QueuePage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="sr-only">Queue</h1>
-
       <div className="rounded-md border bg-card p-3">
+        <h1 className="sr-only">Queue</h1>
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-medium">Filters</div>
           <Button type="button" variant="outline" size="sm" onClick={() => void queue.refetch()} disabled={queue.isFetching}>

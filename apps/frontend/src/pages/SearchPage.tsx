@@ -384,8 +384,8 @@ export function SearchPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="sr-only">Search</h1>
       <div className="flex items-center justify-end gap-2">
+        <h1 className="sr-only">Search</h1>
         <div className="text-xs text-muted-foreground">Broker context</div>
         <select
           aria-label="Broker context"
