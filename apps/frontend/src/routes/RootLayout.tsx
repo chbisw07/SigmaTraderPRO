@@ -46,9 +46,6 @@ export function RootLayout() {
             </div>
             <div className="hidden sm:block min-w-0">
               <div className="truncate text-sm font-semibold tracking-tight">SigmaTraderPRO</div>
-              <div className="truncate text-[11px] text-muted-foreground">
-                ML1 • Terminal
-              </div>
             </div>
           </Link>
 
