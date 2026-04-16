@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
-from urllib.request import urlopen
 
+import httpx
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -17,6 +18,17 @@ from app.services.instrument_normalizer import (
 from app.services.instrument_registry_service import instrument_registry_service
 
 logger = get_logger(__name__)
+
+class InstrumentSyncUpstreamError(RuntimeError):
+    pass
+
+
+class InstrumentSyncDatabaseError(RuntimeError):
+    pass
+
+
+class InstrumentSyncDependencyError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,11 +57,25 @@ class InstrumentSyncService:
             ingested += 1
             pending += 1
             if pending >= batch_size:
-                db.commit()
+                try:
+                    db.commit()
+                except SQLAlchemyError as exc:
+                    db.rollback()
+                    raise InstrumentSyncDatabaseError(
+                        "Database write failed while syncing instruments. "
+                        "Ensure Postgres is running and reachable."
+                    ) from exc
                 pending = 0
 
         if pending:
-            db.commit()
+            try:
+                db.commit()
+            except SQLAlchemyError as exc:
+                db.rollback()
+                raise InstrumentSyncDatabaseError(
+                    "Database write failed while syncing instruments. "
+                    "Ensure Postgres is running and reachable."
+                ) from exc
 
         log_event(
             logger,
@@ -81,11 +107,25 @@ class InstrumentSyncService:
             ingested += 1
             pending += 1
             if pending >= batch_size:
-                db.commit()
+                try:
+                    db.commit()
+                except SQLAlchemyError as exc:
+                    db.rollback()
+                    raise InstrumentSyncDatabaseError(
+                        "Database write failed while syncing instruments. "
+                        "Ensure Postgres is running and reachable."
+                    ) from exc
                 pending = 0
 
         if pending:
-            db.commit()
+            try:
+                db.commit()
+            except SQLAlchemyError as exc:
+                db.rollback()
+                raise InstrumentSyncDatabaseError(
+                    "Database write failed while syncing instruments. "
+                    "Ensure Postgres is running and reachable."
+                ) from exc
 
         log_event(
             logger,
@@ -98,6 +138,27 @@ class InstrumentSyncService:
             skipped=skipped,
         )
         return SyncResult(processed=processed, ingested=ingested, skipped=skipped)
+
+    def _fetch_json(self, *, url: str, timeout_seconds: float) -> Any:
+        headers = {
+            "Accept": "application/json",
+            # Some CDNs block default python user agents; use a browser-like UA.
+            "User-Agent": "Mozilla/5.0 (SigmaTraderPRO)",
+        }
+        try:
+            with httpx.Client(timeout=timeout_seconds, follow_redirects=True) as client:
+                resp = client.get(url, headers=headers)
+        except httpx.HTTPError as exc:
+            raise InstrumentSyncUpstreamError("Instrument master download failed (network error)") from exc
+
+        if resp.status_code != 200:
+            raise InstrumentSyncUpstreamError(
+                f"Instrument master download failed (HTTP {resp.status_code})"
+            )
+        try:
+            return resp.json()
+        except Exception as exc:  # noqa: BLE001 - input may be malformed/HTML etc
+            raise InstrumentSyncUpstreamError("Instrument master payload was not valid JSON") from exc
 
     def sync_angel_master(
         self,
@@ -120,9 +181,9 @@ class InstrumentSyncService:
             raise ValueError("underlyings is required for fno_underlyings scope")
 
         url = settings.angel_instrument_master_url
-        timeout = float(settings.angel_http_timeout_seconds)
-        with urlopen(url, timeout=timeout) as resp:
-            data = json.load(resp)
+        # The Angel master can be large; use a slightly more forgiving timeout.
+        timeout = max(15.0, float(settings.angel_http_timeout_seconds))
+        data = self._fetch_json(url=url, timeout_seconds=timeout)
 
         if not isinstance(data, list):
             raise ValueError("Angel instrument master payload must be a list")
@@ -163,7 +224,12 @@ class InstrumentSyncService:
         underlyings: list[str] | None = None,
         max_rows: int | None = None,
     ) -> SyncResult:
-        from kiteconnect import KiteConnect  # local import to keep core slim
+        try:
+            from kiteconnect import KiteConnect  # local import to keep core slim
+        except Exception as exc:  # noqa: BLE001
+            raise InstrumentSyncDependencyError(
+                "kiteconnect is not available on the server. Install backend dependencies and restart."
+            ) from exc
 
         kite = KiteConnect(api_key=api_key)
         if access_token:
@@ -217,7 +283,12 @@ class InstrumentSyncService:
         Used for on-demand mapping when a position exists but the instrument is
         not yet present in the local registry.
         """
-        from kiteconnect import KiteConnect  # local import to keep core slim
+        try:
+            from kiteconnect import KiteConnect  # local import to keep core slim
+        except Exception as exc:  # noqa: BLE001
+            raise InstrumentSyncDependencyError(
+                "kiteconnect is not available on the server. Install backend dependencies and restart."
+            ) from exc
 
         wanted = {
             str(t).strip()

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.config import settings
+from app.core.logger import get_logger, log_event
 from app.core.crypto import CryptoError, decrypt_json
 from app.db.session import get_db
 from app.instruments.types import Exchange, InstrumentType, OptionType, Segment
@@ -22,9 +23,15 @@ from app.schemas.instrument import (
     ZerodhaNfoSyncRequest,
 )
 from app.services.instrument_registry_service import instrument_registry_service
-from app.services.instrument_sync_service import instrument_sync_service
+from app.services.instrument_sync_service import (
+    InstrumentSyncDatabaseError,
+    InstrumentSyncDependencyError,
+    InstrumentSyncUpstreamError,
+    instrument_sync_service,
+)
 
 router = APIRouter(prefix="/instruments", tags=["instruments"])
+logger = get_logger(__name__)
 
 
 @router.get("/search", response_model=InstrumentSearchResponse)
@@ -143,7 +150,44 @@ def sync_angel_master(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
-    except Exception as exc:
+    except InstrumentSyncDatabaseError as exc:
+        log_event(
+            logger,
+            "instrument_sync_failed",
+            category="instruments",
+            event_type="sync",
+            source="angel_master",
+            scope=payload.scope,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except InstrumentSyncUpstreamError as exc:
+        log_event(
+            logger,
+            "instrument_sync_failed",
+            category="instruments",
+            event_type="sync",
+            source="angel_master",
+            scope=payload.scope,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        log_event(
+            logger,
+            "instrument_sync_failed",
+            category="instruments",
+            event_type="sync",
+            source="angel_master",
+            scope=payload.scope,
+            error=str(exc),
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Instrument sync failed",
@@ -201,7 +245,44 @@ def sync_zerodha_nfo(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
+    except InstrumentSyncDependencyError as exc:
+        log_event(
+            logger,
+            "instrument_sync_failed",
+            category="instruments",
+            event_type="sync",
+            source="zerodha_nfo",
+            scope="fno_underlyings",
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except InstrumentSyncDatabaseError as exc:
+        log_event(
+            logger,
+            "instrument_sync_failed",
+            category="instruments",
+            event_type="sync",
+            source="zerodha_nfo",
+            scope="fno_underlyings",
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:  # noqa: BLE001
+        log_event(
+            logger,
+            "instrument_sync_failed",
+            category="instruments",
+            event_type="sync",
+            source="zerodha_nfo",
+            scope="fno_underlyings",
+            error=str(exc),
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Zerodha instrument sync failed",
