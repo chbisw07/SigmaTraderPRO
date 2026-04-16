@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -292,7 +291,7 @@ class InstrumentSyncService:
         max_rows: int | None = None,
     ) -> SyncResult:
         """
-        Targeted Zerodha NFO sync for a specific set of instrument tokens.
+        Targeted Zerodha instrument sync for a specific set of instrument tokens.
 
         Used for on-demand mapping when a position exists but the instrument is
         not yet present in the local registry.
@@ -315,31 +314,39 @@ class InstrumentSyncService:
         kite = KiteConnect(api_key=api_key)
         if access_token:
             kite.set_access_token(access_token)
-        try:
-            rows = kite.instruments("NFO")
-        except Exception as exc:  # noqa: BLE001 - external SDK best-effort
-            msg = str(exc).strip().replace("\n", " ")
-            msg = msg[:240] if msg else "unknown error"
-            raise ValueError(
-                "Zerodha instruments fetch failed. "
-                "Reconnect Zerodha and retry. "
-                f"({msg})"
-            ) from exc
-        if not isinstance(rows, list):
-            raise ValueError("Zerodha instruments payload must be a list")
 
         selected: list[dict[str, Any]] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            token = row.get("instrument_token")
-            if token is None:
-                continue
-            if str(token) not in wanted:
-                continue
-            selected.append(row)
-            if max_rows and len(selected) >= max_rows:
+        remaining = set(wanted)
+        # Positions can contain cash + derivatives. Try common exchanges in order.
+        any_fetch = False
+        for exch in ["NFO", "BFO", "NSE", "BSE"]:
+            if not remaining:
                 break
+            try:
+                rows = kite.instruments(exch)
+                any_fetch = True
+            except Exception:  # noqa: BLE001 - external SDK best-effort
+                # Not all accounts have access to all exchanges (e.g., BFO). Try the next.
+                continue
+            if not isinstance(rows, list):
+                raise ValueError("Zerodha instruments payload must be a list")
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                token = row.get("instrument_token")
+                if token is None:
+                    continue
+                token_s = str(token)
+                if token_s not in remaining:
+                    continue
+                selected.append(row)
+                remaining.discard(token_s)
+                if max_rows and len(selected) >= max_rows:
+                    break
+
+        if not any_fetch:
+            raise ValueError("Zerodha instruments fetch failed. Reconnect Zerodha and retry.")
 
         return self.sync_zerodha_rows(db, selected)
 
@@ -375,9 +382,8 @@ class InstrumentSyncService:
             raise ValueError("instrument_tokens is required for angel token sync")
 
         url = settings.angel_instrument_master_url
-        timeout = float(settings.angel_http_timeout_seconds)
-        with urlopen(url, timeout=timeout) as resp:
-            data = json.load(resp)
+        timeout = max(15.0, float(settings.angel_http_timeout_seconds))
+        data = self._fetch_json(url=url, timeout_seconds=timeout)
 
         if not isinstance(data, list):
             raise ValueError("Angel instrument master payload must be a list")

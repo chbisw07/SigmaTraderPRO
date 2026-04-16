@@ -327,8 +327,6 @@ def _parse_zerodha_expiry(value: Any) -> date | None:
 
 def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | None:
     exchange = str(row.get("exchange") or "").strip().upper()
-    if exchange != "NFO":
-        return None
 
     token = row.get("instrument_token")
     if token is None:
@@ -341,6 +339,58 @@ def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | 
     expiry = _parse_zerodha_expiry(row.get("expiry"))
     lot_size = _parse_int(row.get("lot_size"))
     tick_size = _parse_float(row.get("tick_size"))
+    isin = str(row.get("isin") or "").strip() or None
+
+    # Cash equities (NSE/BSE)
+    if exchange in {"NSE", "BSE"} and inst_type_raw in {"EQ", "EQUITY"}:
+        exchange_enum = Exchange.NSE_EQ if exchange == "NSE" else Exchange.BSE_EQ
+        segment = Segment.EQUITY
+        inst_type = InstrumentType.EQUITY
+        symbol_root = (tradingsymbol or name).strip().upper()
+        if not symbol_root:
+            return None
+        display = _display_symbol(
+            instrument_type=inst_type,
+            symbol_root=symbol_root,
+            expiry=None,
+            strike=None,
+            option_type=None,
+        )
+        canonical = _canonical_id(
+            exchange=exchange_enum,
+            segment=segment,
+            instrument_type=inst_type,
+            symbol_root=symbol_root,
+            expiry=None,
+            strike=None,
+            option_type=None,
+        )
+        return NormalizedInstrument(
+            canonical_id=canonical,
+            exchange=exchange_enum,
+            segment=segment,
+            instrument_type=inst_type,
+            symbol_root=symbol_root,
+            display_symbol=display,
+            underlying=None,
+            expiry=None,
+            strike=None,
+            option_type=None,
+            lot_size=lot_size,
+            tick_size=tick_size,
+            isin=isin,
+            is_active=True,
+            broker_key=BrokerKey.zerodha,
+            broker_instrument_id=str(token),
+            broker_trading_symbol=tradingsymbol or None,
+            raw=_json_safe(row),
+        )
+
+    # Derivatives (NFO/BFO)
+    if exchange not in {"NFO", "BFO"}:
+        return None
+
+    ex_enum = Exchange.NSE_FNO if exchange == "NFO" else Exchange.BSE_FNO
 
     if inst_type_raw in {"CE", "PE"}:
         strike_raw = _parse_float(row.get("strike"))
@@ -359,7 +409,7 @@ def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | 
             option_type=opt_type,
         )
         canonical = _canonical_id(
-            exchange=Exchange.NSE_FNO,
+            exchange=ex_enum,
             segment=segment,
             instrument_type=inst_type,
             symbol_root=name,
@@ -369,7 +419,7 @@ def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | 
         )
         return NormalizedInstrument(
             canonical_id=canonical,
-            exchange=Exchange.NSE_FNO,
+            exchange=ex_enum,
             segment=segment,
             instrument_type=inst_type,
             symbol_root=name,
@@ -401,7 +451,7 @@ def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | 
             option_type=None,
         )
         canonical = _canonical_id(
-            exchange=Exchange.NSE_FNO,
+            exchange=ex_enum,
             segment=segment,
             instrument_type=inst_type,
             symbol_root=name,
@@ -411,7 +461,7 @@ def normalize_zerodha_instrument(row: dict[str, Any]) -> NormalizedInstrument | 
         )
         return NormalizedInstrument(
             canonical_id=canonical,
-            exchange=Exchange.NSE_FNO,
+            exchange=ex_enum,
             segment=segment,
             instrument_type=inst_type,
             symbol_root=name,
