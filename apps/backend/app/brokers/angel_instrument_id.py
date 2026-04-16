@@ -10,6 +10,12 @@ class AngelInstrumentId:
 
 
 _EXCH_NORMALIZE: dict[str, str] = {
+    # Equity cash segments
+    "NSECM": "NSE",
+    "BSECM": "BSE",
+    "NSE_EQ": "NSE",
+    "BSE_EQ": "BSE",
+    # F&O segments / legacy aliases
     "NSEFO": "NFO",
     "NFOFO": "NFO",
     "NSE_FNO": "NFO",
@@ -46,4 +52,3 @@ def decode_angel_instrument_id(value: str | None) -> AngelInstrumentId | None:
     if not tok_n:
         return None
     return AngelInstrumentId(exch_seg=seg_n, token=tok_n)
-
