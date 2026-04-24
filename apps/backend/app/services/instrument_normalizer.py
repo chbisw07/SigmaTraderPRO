@@ -5,7 +5,10 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from app.brokers.angel_instrument_id import encode_angel_instrument_id, normalize_angel_exch_seg
+from app.brokers.angel_instrument_id import (
+    encode_angel_instrument_id,
+    normalize_angel_exch_seg,
+)
 from app.brokers.types import BrokerKey
 from app.instruments.types import Exchange, InstrumentType, OptionType, Segment
 

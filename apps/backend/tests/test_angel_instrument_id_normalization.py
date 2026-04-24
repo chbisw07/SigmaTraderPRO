@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from app.brokers.angel_instrument_id import encode_angel_instrument_id, normalize_angel_exch_seg
+from app.brokers.angel_instrument_id import (
+    encode_angel_instrument_id,
+    normalize_angel_exch_seg,
+)
 
 
 def test_normalize_angel_exch_seg_handles_cash_aliases() -> None:

@@ -21,7 +21,10 @@ from app.models.base import Base
 from app.models.instrument import Instrument
 from app.models.instrument_mapping import InstrumentMapping
 from app.models.user import User
-from app.services.instrument_normalizer import normalize_angel_instrument, normalize_zerodha_instrument
+from app.services.instrument_normalizer import (
+    normalize_angel_instrument,
+    normalize_zerodha_instrument,
+)
 from app.services.instrument_registry_service import instrument_registry_service
 from app.services.instrument_sync_service import instrument_sync_service
 

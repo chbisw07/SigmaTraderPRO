@@ -38,7 +38,9 @@ def normalize_angel_exch_seg(exch_seg: str | None) -> str | None:
     return _EXCH_NORMALIZE.get(raw, raw)
 
 
-def encode_angel_instrument_id(*, exch_seg: str | None, token: str | None) -> str | None:
+def encode_angel_instrument_id(
+    *, exch_seg: str | None, token: str | None
+) -> str | None:
     seg = normalize_angel_exch_seg(exch_seg)
     tok = str(token or "").strip()
     if not seg or not tok:

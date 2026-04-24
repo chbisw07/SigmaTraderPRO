@@ -4,11 +4,6 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from app.brokers.angel_instrument_id import (
-    decode_angel_instrument_id,
-    encode_angel_instrument_id,
-    normalize_angel_exch_seg,
-)
 from app.brokers.angel_client import (
     AngelAuthError,
     AngelOrderBookError,
@@ -20,6 +15,11 @@ from app.brokers.angel_client import (
     fetch_quotes,
     login_by_password,
     place_order,
+)
+from app.brokers.angel_instrument_id import (
+    decode_angel_instrument_id,
+    encode_angel_instrument_id,
+    normalize_angel_exch_seg,
 )
 from app.brokers.base import BrokerAdapter, BrokerError, BrokerNotConfiguredError
 from app.brokers.types import BrokerKey, BrokerSessionState, BrokerStatus
@@ -43,6 +43,7 @@ from app.orders.types import (
 )
 
 logger = get_logger(__name__)
+
 
 def _parse_order_timestamp(ts: object) -> datetime | None:
     if not ts:
@@ -746,8 +747,15 @@ class AngelAdapter(BrokerAdapter):
         ordered: list[BrokerQuoteRequest] = []
         for req in requests:
             decoded = decode_angel_instrument_id(req.broker_instrument_id)
-            token = decoded.token if decoded else str(req.broker_instrument_id or "").strip()
-            exch = normalize_angel_exch_seg(req.exchange) or str(req.exchange or "").strip().upper()
+            token = (
+                decoded.token
+                if decoded
+                else str(req.broker_instrument_id or "").strip()
+            )
+            exch = (
+                normalize_angel_exch_seg(req.exchange)
+                or str(req.exchange or "").strip().upper()
+            )
             if not token or not exch:
                 continue
             exchange_tokens.setdefault(exch, []).append(token)
@@ -792,7 +800,11 @@ class AngelAdapter(BrokerAdapter):
         out: list[ExternalBrokerQuote] = []
         for req in ordered:
             decoded = decode_angel_instrument_id(req.broker_instrument_id)
-            token = decoded.token if decoded else str(req.broker_instrument_id or "").strip()
+            token = (
+                decoded.token
+                if decoded
+                else str(req.broker_instrument_id or "").strip()
+            )
             row = by_token.get(token)
             last_price = None
             prev_close = None

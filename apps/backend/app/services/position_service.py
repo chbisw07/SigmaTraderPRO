@@ -142,14 +142,24 @@ class PositionService:
             if not raw:
                 return None
             sym = raw.upper()
-            inst = qry.filter(InstrumentMapping.broker_trading_symbol == sym).one_or_none()
+            inst = qry.filter(
+                InstrumentMapping.broker_trading_symbol == sym
+            ).one_or_none()
             if inst:
                 return inst
             # SmartAPI cash positions sometimes report "TCS" while the master
             # uses "TCS-EQ". Try the common suffix for NSE/BSE cash.
             exch = str(exchange or "").strip().upper()
-            if broker == BrokerKey.angel and exch in {"NSE", "BSE", "NSECM", "BSECM"} and "-EQ" not in sym:
-                inst = qry.filter(InstrumentMapping.broker_trading_symbol == f"{sym}-EQ").one_or_none()
+            is_angel_cash = broker == BrokerKey.angel and exch in {
+                "NSE",
+                "BSE",
+                "NSECM",
+                "BSECM",
+            }
+            if is_angel_cash and "-EQ" not in sym:
+                inst = qry.filter(
+                    InstrumentMapping.broker_trading_symbol == f"{sym}-EQ"
+                ).one_or_none()
                 if inst:
                     return inst
         return None

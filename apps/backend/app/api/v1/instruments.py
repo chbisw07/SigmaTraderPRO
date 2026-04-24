@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.config import settings
-from app.core.logger import get_logger, log_event
 from app.core.crypto import CryptoError, decrypt_json
+from app.core.logger import get_logger, log_event
 from app.db.session import get_db
 from app.instruments.types import Exchange, InstrumentType, OptionType, Segment
 from app.models.broker_connection import BrokerConnection
@@ -32,6 +32,7 @@ from app.services.instrument_sync_service import (
 
 router = APIRouter(prefix="/instruments", tags=["instruments"])
 logger = get_logger(__name__)
+
 
 def _dev_detail(public_message: str, exc: Exception) -> str:
     env = (settings.app_env or "").strip().lower()

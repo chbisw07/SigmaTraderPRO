@@ -7,9 +7,12 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.brokers.angel_instrument_id import (
+    encode_angel_instrument_id,
+    normalize_angel_exch_seg,
+)
 from app.core.config import settings
 from app.core.logger import get_logger, log_event
-from app.brokers.angel_instrument_id import normalize_angel_exch_seg, encode_angel_instrument_id
 from app.services.instrument_normalizer import (
     normalize_angel_instrument,
     normalize_zerodha_instrument,
@@ -17,6 +20,7 @@ from app.services.instrument_normalizer import (
 from app.services.instrument_registry_service import instrument_registry_service
 
 logger = get_logger(__name__)
+
 
 class InstrumentSyncUpstreamError(RuntimeError):
     pass
@@ -162,7 +166,9 @@ class InstrumentSyncService:
             with httpx.Client(timeout=timeout_seconds, follow_redirects=True) as client:
                 resp = client.get(url, headers=headers)
         except httpx.HTTPError as exc:
-            raise InstrumentSyncUpstreamError("Instrument master download failed (network error)") from exc
+            raise InstrumentSyncUpstreamError(
+                "Instrument master download failed (network error)"
+            ) from exc
 
         if resp.status_code != 200:
             raise InstrumentSyncUpstreamError(
@@ -171,7 +177,9 @@ class InstrumentSyncService:
         try:
             return resp.json()
         except Exception as exc:  # noqa: BLE001 - input may be malformed/HTML etc
-            raise InstrumentSyncUpstreamError("Instrument master payload was not valid JSON") from exc
+            raise InstrumentSyncUpstreamError(
+                "Instrument master payload was not valid JSON"
+            ) from exc
 
     def sync_angel_master(
         self,
@@ -241,7 +249,8 @@ class InstrumentSyncService:
             from kiteconnect import KiteConnect  # local import to keep core slim
         except Exception as exc:  # noqa: BLE001
             raise InstrumentSyncDependencyError(
-                "kiteconnect is not available on the server. Install backend dependencies and restart."
+                "kiteconnect is not available on the server. "
+                "Install backend dependencies and restart."
             ) from exc
 
         kite = KiteConnect(api_key=api_key)
@@ -300,7 +309,8 @@ class InstrumentSyncService:
             from kiteconnect import KiteConnect  # local import to keep core slim
         except Exception as exc:  # noqa: BLE001
             raise InstrumentSyncDependencyError(
-                "kiteconnect is not available on the server. Install backend dependencies and restart."
+                "kiteconnect is not available on the server. "
+                "Install backend dependencies and restart."
             ) from exc
 
         wanted = {
@@ -326,7 +336,8 @@ class InstrumentSyncService:
                 rows = kite.instruments(exch)
                 any_fetch = True
             except Exception:  # noqa: BLE001 - external SDK best-effort
-                # Not all accounts have access to all exchanges (e.g., BFO). Try the next.
+                # Not all accounts have access to all exchanges (e.g., BFO).
+                # Try the next.
                 continue
             if not isinstance(rows, list):
                 raise ValueError("Zerodha instruments payload must be a list")
@@ -346,7 +357,9 @@ class InstrumentSyncService:
                     break
 
         if not any_fetch:
-            raise ValueError("Zerodha instruments fetch failed. Reconnect Zerodha and retry.")
+            raise ValueError(
+                "Zerodha instruments fetch failed. Reconnect Zerodha and retry."
+            )
 
         return self.sync_zerodha_rows(db, selected)
 
@@ -398,12 +411,11 @@ class InstrumentSyncService:
             token_s = str(token).strip()
             exch_seg = normalize_angel_exch_seg(row.get("exch_seg"))
             composite = encode_angel_instrument_id(exch_seg=exch_seg, token=token_s)
-            if composite:
-                if composite.upper() in wanted:
-                    selected.append(row)
-                    if max_rows and len(selected) >= max_rows:
-                        break
-                    continue
+            if composite and composite.upper() in wanted:
+                selected.append(row)
+                if max_rows and len(selected) >= max_rows:
+                    break
+                continue
             if token_s not in wanted_tokens:
                 continue
             selected.append(row)

@@ -469,8 +469,9 @@ class ZerodhaAdapter(BrokerAdapter):
                     if " " in s and "T" not in s:
                         s = s.replace(" ", "T", 1)
                     placed_at = datetime.fromisoformat(s)
-                    # Zerodha timestamps are generally in IST but often arrive without an explicit offset.
-                    # Interpret naive datetimes as IST and normalize to UTC for storage/transport.
+                    # Zerodha timestamps are generally in IST but often arrive
+                    # without an explicit offset. Interpret naive datetimes as
+                    # IST and normalize to UTC for storage/transport.
                     if placed_at.tzinfo is None:
                         placed_at = placed_at.replace(tzinfo=IST).astimezone(UTC)
                 except Exception:
