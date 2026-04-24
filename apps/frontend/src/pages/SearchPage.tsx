@@ -16,6 +16,7 @@ import * as watchlistsApi from '@/lib/api/watchlists'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useQuoteStore } from '@/store/quoteStore'
+import { WATCHLIST_ENTRY_LIMIT } from '@/store/watchlistStructureStore'
 import { computeAtmStrike, computeMoneyness, moneynessBadgeClasses } from '@/lib/moneyness'
 import { formatStrikeHuman } from '@/lib/format'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
@@ -171,6 +172,15 @@ export function SearchPage() {
       if (!accessToken) throw new Error('no auth')
       const activeId = safeStoredActiveWatchlistId()
       if (activeId) {
+        const cached = queryClient.getQueryData<watchlistsApi.WatchlistItemsResponse | null>([
+          'watchlists',
+          'items',
+          activeId,
+        ])
+        const count = cached?.items?.length ?? null
+        if (count != null && count >= WATCHLIST_ENTRY_LIMIT) {
+          throw new Error('WATCHLIST_LIMIT')
+        }
         try {
           return await watchlistsApi.addWatchlistItem(accessToken, activeId, {
             canonical_id: canonicalId,
@@ -185,7 +195,14 @@ export function SearchPage() {
       setWatchlistMsg('Added to watchlist')
       await queryClient.invalidateQueries({ queryKey: ['watchlists'] })
     },
-    onError: () => setWatchlistMsg('Add to watchlist failed'),
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : ''
+      if (msg === 'WATCHLIST_LIMIT') {
+        setWatchlistMsg(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+        return
+      }
+      setWatchlistMsg('Add to watchlist failed')
+    },
   })
 
   const search = useQuery({

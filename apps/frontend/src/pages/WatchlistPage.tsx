@@ -3,6 +3,8 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
   Briefcase,
+  ChevronDown,
+  ChevronRight,
   Maximize2,
   Minimize2,
   MoreHorizontal,
@@ -30,6 +32,7 @@ import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 import { useAuthStore } from '@/store/authStore'
 import { useWatchlistLayoutStore } from '@/store/watchlistLayoutStore'
+import { WATCHLIST_ENTRY_LIMIT, WATCHLIST_SLOT_COUNT, useWatchlistStructureStore } from '@/store/watchlistStructureStore'
 
 const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
 
@@ -161,11 +164,27 @@ export function WatchlistPage() {
   const watchlistMode = useWatchlistLayoutStore((s) => s.mode)
   const setWatchlistMode = useWatchlistLayoutStore((s) => s.setMode)
 
-  const [activeIdOverride, setActiveIdOverride] = useState<number | null>(() => safeStoredActiveId())
   const [banner, setBanner] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [rowMenuOpenId, setRowMenuOpenId] = useState<number | null>(null)
   const [scope, setScope] = useState<WatchlistSearchScope>('all')
+
+  const activeSlot = useWatchlistStructureStore((s) => s.activeSlot)
+  const setActiveSlot = useWatchlistStructureStore((s) => s.setActiveSlot)
+  const slotToWatchlistId = useWatchlistStructureStore((s) => s.slotToWatchlistId)
+  const setSlotMap = useWatchlistStructureStore((s) => s.setSlotMap)
+
+  const ensureDefaultGroup = useWatchlistStructureStore((s) => s.ensureDefaultGroup)
+  const groupsByWatchlistId = useWatchlistStructureStore((s) => s.groupsByWatchlistId)
+  const activeGroupByWatchlistId = useWatchlistStructureStore((s) => s.activeGroupByWatchlistId)
+  const entryGroupByKeyByWatchlistId = useWatchlistStructureStore((s) => s.entryGroupByKeyByWatchlistId)
+  const setActiveGroup = useWatchlistStructureStore((s) => s.setActiveGroup)
+  const createGroup = useWatchlistStructureStore((s) => s.createGroup)
+  const renameGroup = useWatchlistStructureStore((s) => s.renameGroup)
+  const toggleGroupCollapsed = useWatchlistStructureStore((s) => s.toggleGroupCollapsed)
+  const deleteGroup = useWatchlistStructureStore((s) => s.deleteGroup)
+  const setEntryGroup = useWatchlistStructureStore((s) => s.setEntryGroup)
+  const clearEntryGroup = useWatchlistStructureStore((s) => s.clearEntryGroup)
 
   const selectedBroker = (user?.last_used_broker as BrokerKey | null) ?? null
   const broker = selectedBroker ?? 'angel'
@@ -179,22 +198,133 @@ export function WatchlistPage() {
     enabled: Boolean(accessToken),
   })
 
+  const ensuringSlotsRef = useRef(false)
+
+  useEffect(() => {
+    if (!accessToken) return
+    const token = accessToken
+    const server = watchlists.data?.items
+    if (!server) return
+
+    const existingIds = new Set<number>(server.map((w) => w.id))
+    const current = useWatchlistStructureStore.getState().slotToWatchlistId
+    let needs = false
+    for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
+      const id = current[slot]
+      if (id == null || !existingIds.has(id)) {
+        needs = true
+        break
+      }
+    }
+    if (!needs) return
+    if (ensuringSlotsRef.current) return
+    ensuringSlotsRef.current = true
+
+    void (async () => {
+      try {
+        const nameSet = new Set(server.map((w) => w.name.trim().toLowerCase()))
+        const byIdAsc = [...server].sort((a, b) => a.id - b.id)
+
+        const next: Record<number, number | null> = {}
+        const used = new Set<number>()
+        for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
+          const id = current[slot]
+          if (id != null && existingIds.has(id) && !used.has(id)) {
+            next[slot] = id
+            used.add(id)
+          } else {
+            next[slot] = null
+          }
+        }
+
+        const pool: number[] = []
+        for (const w of byIdAsc) if (!used.has(w.id)) pool.push(w.id)
+
+        for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
+          if (next[slot] != null) continue
+          const id = pool.shift() ?? null
+          if (id != null) {
+            next[slot] = id
+            used.add(id)
+          }
+        }
+
+        async function createForSlot(slot: number): Promise<watchlistsApi.WatchlistOut> {
+          const base = `Watchlist ${slot}`
+          const candidates = [
+            base,
+            `WL ${slot}`,
+            `Watchlist ${slot} (${Math.floor(Date.now() / 1000)})`,
+          ]
+          for (const name of candidates) {
+            const key = name.trim().toLowerCase()
+            if (nameSet.has(key)) continue
+            try {
+              const wl = await watchlistsApi.createWatchlist(token, { name })
+              nameSet.add(key)
+              return wl
+            } catch {
+              // try next candidate
+            }
+          }
+          // last-resort unique name
+          const name = `WL ${slot} ${Math.random().toString(16).slice(2, 6)}`
+          const wl = await watchlistsApi.createWatchlist(token, { name })
+          return wl
+        }
+
+        for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
+          if (next[slot] != null) continue
+          const created = await createForSlot(slot)
+          next[slot] = created.id
+        }
+
+        setSlotMap(next)
+
+        const stored = safeStoredActiveId()
+        let nextActiveSlot = activeSlot
+        if (stored != null) {
+          for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
+            if (next[slot] === stored) nextActiveSlot = slot
+          }
+        }
+        if (next[nextActiveSlot] == null) nextActiveSlot = 1
+        setActiveSlot(nextActiveSlot)
+
+        const nextId = next[nextActiveSlot] ?? next[1]
+        if (nextId != null) setStoredActiveId(nextId)
+      } catch {
+        setBanner('Watchlist init failed')
+      } finally {
+        ensuringSlotsRef.current = false
+      }
+    })()
+  }, [accessToken, watchlists.data, activeSlot, setActiveSlot, setSlotMap])
+
+  const watchlistById = useMemo(() => {
+    const map = new Map<number, watchlistsApi.WatchlistOut>()
+    for (const w of watchlists.data?.items ?? []) map.set(w.id, w)
+    return map
+  }, [watchlists.data])
+
   const activeId = useMemo(() => {
-    const items = watchlists.data?.items ?? []
-    if (!items.length) return null
-    const validOverride =
-      activeIdOverride != null && items.some((w) => w.id === activeIdOverride)
-    if (validOverride) return activeIdOverride
-    const stored = safeStoredActiveId()
-    const storedValid = stored != null && items.some((w) => w.id === stored)
-    if (storedValid) return stored
-    const def = items.find((w) => w.is_default) ?? items[0]
-    return def.id
-  }, [activeIdOverride, watchlists.data])
+    const id = slotToWatchlistId[activeSlot] ?? null
+    if (id != null && watchlistById.has(id)) return id
+    for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
+      const v = slotToWatchlistId[slot]
+      if (v != null && watchlistById.has(v)) return v
+    }
+    const first = watchlists.data?.items?.[0]?.id ?? null
+    return first
+  }, [activeSlot, slotToWatchlistId, watchlistById, watchlists.data])
 
   useEffect(() => {
     if (activeId != null) setStoredActiveId(activeId)
   }, [activeId])
+
+  useEffect(() => {
+    if (activeId != null) ensureDefaultGroup(activeId)
+  }, [activeId, ensureDefaultGroup])
 
   const watchlistItems = useQuery({
     queryKey: ['watchlists', 'items', activeId],
@@ -203,20 +333,6 @@ export function WatchlistPage() {
       return watchlistsApi.listWatchlistItems(accessToken, activeId)
     },
     enabled: Boolean(accessToken) && Boolean(activeId),
-  })
-
-  const createWl = useMutation({
-    mutationFn: async ({ name, make_default }: { name: string; make_default?: boolean }) => {
-      if (!accessToken) throw new Error('no auth')
-      return watchlistsApi.createWatchlist(accessToken, { name, make_default })
-    },
-    onSuccess: async (wl) => {
-      await watchlists.refetch()
-      setActiveIdOverride(wl.id)
-      setStoredActiveId(wl.id)
-      setBanner('Watchlist created')
-    },
-    onError: () => setBanner('Create failed'),
   })
 
   const updateWl = useMutation({
@@ -231,24 +347,13 @@ export function WatchlistPage() {
     onError: () => setBanner('Update failed'),
   })
 
-  const deleteWl = useMutation({
-    mutationFn: async (id: number) => {
-      if (!accessToken) throw new Error('no auth')
-      await watchlistsApi.deleteWatchlist(accessToken, id)
-    },
-    onSuccess: async () => {
-      await watchlists.refetch()
-      setBanner('Watchlist deleted')
-    },
-    onError: () => setBanner('Delete failed'),
-  })
-
   const addItem = useMutation({
-    mutationFn: async ({ watchlistId, canonicalId }: { watchlistId: number; canonicalId: string }) => {
+    mutationFn: async ({ watchlistId, canonicalId }: { watchlistId: number; canonicalId: string; groupId: string }) => {
       if (!accessToken) throw new Error('no auth')
       return watchlistsApi.addWatchlistItem(accessToken, watchlistId, { canonical_id: canonicalId })
     },
-    onSuccess: async () => {
+    onSuccess: async (_created, vars) => {
+      setEntryGroup(vars.watchlistId, vars.canonicalId, vars.groupId)
       await watchlistItems.refetch()
       setBanner('Added to watchlist')
     },
@@ -256,11 +361,13 @@ export function WatchlistPage() {
   })
 
   const addUnderlying = useMutation({
-    mutationFn: async ({ watchlistId, underlying }: { watchlistId: number; underlying: string }) => {
+    mutationFn: async ({ watchlistId, underlying }: { watchlistId: number; underlying: string; groupId: string }) => {
       if (!accessToken) throw new Error('no auth')
       return watchlistsApi.addWatchlistItem(accessToken, watchlistId, { underlying })
     },
-    onSuccess: async () => {
+    onSuccess: async (created, vars) => {
+      const key = created.canonical_id ?? created.symbol_key
+      if (key) setEntryGroup(vars.watchlistId, key, vars.groupId)
       await watchlistItems.refetch()
       setBanner('Added underlying')
     },
@@ -268,11 +375,12 @@ export function WatchlistPage() {
   })
 
   const removeItem = useMutation({
-    mutationFn: async ({ watchlistId, itemId }: { watchlistId: number; itemId: number }) => {
+    mutationFn: async ({ watchlistId, itemId }: { watchlistId: number; itemId: number; entryKey: string }) => {
       if (!accessToken) throw new Error('no auth')
       await watchlistsApi.removeWatchlistItem(accessToken, watchlistId, itemId)
     },
-    onSuccess: async () => {
+    onSuccess: async (_v, vars) => {
+      clearEntryGroup(vars.watchlistId, vars.entryKey)
       await watchlistItems.refetch()
       setBanner('Removed')
     },
@@ -476,7 +584,21 @@ export function WatchlistPage() {
     return set
   }, [items])
   const brokerState = brokerStatus.data?.find((b) => b.broker === broker) ?? null
-  const watchlistTabs = useMemo(() => watchlists.data?.items ?? [], [watchlists.data])
+
+  const slotTabs = useMemo(() => {
+    const tabs: Array<{ slot: number; watchlistId: number | null; name: string }> = []
+    for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
+      const watchlistId = slotToWatchlistId[slot] ?? null
+      const wl = watchlistId != null ? watchlistById.get(watchlistId) ?? null : null
+      tabs.push({ slot, watchlistId, name: wl?.name ?? `Watchlist ${slot}` })
+    }
+    return tabs
+  }, [slotToWatchlistId, watchlistById])
+
+  const activeWatchlist = useMemo(() => {
+    if (!activeId) return null
+    return watchlistById.get(activeId) ?? null
+  }, [activeId, watchlistById])
 
   const canonicalIds = useMemo(() => {
     const ids: string[] = []
@@ -505,10 +627,11 @@ export function WatchlistPage() {
     return map
   }, [quotes.data])
 
-  const [newName, setNewName] = useState('')
-  const [makeDefault, setMakeDefault] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [newGroupName, setNewGroupName] = useState('')
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
+  const [editingGroupName, setEditingGroupName] = useState('')
 
   const isCompact = watchlistMode === 'compact'
 
@@ -525,6 +648,53 @@ export function WatchlistPage() {
 
     return items.filter((i) => byText(i))
   }, [items, q])
+
+  const activeGroupId = useMemo(() => {
+    if (!activeId) return 'default'
+    return activeGroupByWatchlistId[activeId] ?? 'default'
+  }, [activeGroupByWatchlistId, activeId])
+
+  const groups = useMemo(() => {
+    if (!activeId) return []
+    const raw = groupsByWatchlistId[activeId] ?? []
+    const hasDefault = raw.some((g) => g.id === 'default')
+    const next = hasDefault ? raw : [{ id: 'default', name: 'Default', collapsed: false, sort_order: 0 }, ...raw]
+    return [...next].sort((a, b) => a.sort_order - b.sort_order)
+  }, [activeId, groupsByWatchlistId])
+
+  const entryGroupMap = useMemo(() => {
+    if (!activeId) return {}
+    return entryGroupByKeyByWatchlistId[activeId] ?? {}
+  }, [activeId, entryGroupByKeyByWatchlistId])
+
+  const groupCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const item of items) {
+      const key = item.canonical_id ?? item.symbol_key
+      const gid = (key ? entryGroupMap[key] : null) ?? 'default'
+      counts.set(gid, (counts.get(gid) ?? 0) + 1)
+    }
+    return counts
+  }, [entryGroupMap, items])
+
+  const groupedFilteredItems = useMemo(() => {
+    const buckets = new Map<string, watchlistsApi.WatchlistItemOut[]>()
+    for (const g of groups) buckets.set(g.id, [])
+    if (!buckets.has('default')) buckets.set('default', [])
+
+    for (const item of filteredItems) {
+      const key = item.canonical_id ?? item.symbol_key
+      const gid = (key ? entryGroupMap[key] : null) ?? 'default'
+      const bucket = buckets.get(gid) ?? buckets.get('default')
+      if (bucket) bucket.push(item)
+    }
+    return buckets
+  }, [entryGroupMap, filteredItems, groups])
+
+  const activeGroupName = useMemo(() => {
+    const g = groups.find((x) => x.id === activeGroupId) ?? groups.find((x) => x.id === 'default') ?? null
+    return g?.name ?? 'Default'
+  }, [activeGroupId, groups])
 
   return (
     <div className={cn('space-y-6', isCompact && 'space-y-3')}>
@@ -592,31 +762,17 @@ export function WatchlistPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="flex flex-1 items-center gap-1 overflow-x-auto">
-              {watchlistTabs.map((wl) => {
-                const activeTab = activeId === wl.id
-                return (
-                  <button
-                    key={wl.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveIdOverride(wl.id)
-                      setStoredActiveId(wl.id)
-                    }}
-                    className={cn(
-                      'rounded-md px-3 py-1 text-sm whitespace-nowrap',
-                      activeTab ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/30 hover:text-foreground',
-                    )}
-                  >
-                    <span className="font-medium">{wl.name}</span>
-                    {wl.is_default ? <span className="ml-1 text-[11px] text-muted-foreground/80">★</span> : null}
-                  </button>
-                )
-              })}
-              <Button type="button" size="icon" variant="ghost" aria-label="New watchlist" onClick={() => setSettingsOpen(true)}>
-                <Plus />
-              </Button>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">
+                {activeWatchlist?.name ?? `Watchlist ${activeSlot}`}
+              </div>
+              <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                Slot {activeSlot} • Group: {activeGroupName}
+              </div>
+            </div>
+            <div className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+              {items.length} / {WATCHLIST_ENTRY_LIMIT}
             </div>
           </div>
 
@@ -706,7 +862,11 @@ export function WatchlistPage() {
                         onClick={() => {
                           if (!activeId) return
                           if (already) return
-                          void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id })
+                          if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                            setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                            return
+                          }
+                          void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
                           setQ('')
                           inputRef.current?.focus()
                         }}
@@ -773,7 +933,11 @@ export function WatchlistPage() {
                         onClick={() => {
                           if (!activeId) return
                           if (already) return
-                          void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id })
+                          if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                            setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                            return
+                          }
+                          void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
                           setQ('')
                           inputRef.current?.focus()
                         }}
@@ -796,7 +960,11 @@ export function WatchlistPage() {
                     if (!activeId) return
                     const u = q.trim().toUpperCase()
                     if (!u) return
-                    void addUnderlying.mutate({ watchlistId: activeId, underlying: u })
+                    if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                      setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                      return
+                    }
+                    void addUnderlying.mutate({ watchlistId: activeId, underlying: u, groupId: activeGroupId })
                     setQ('')
                     inputRef.current?.focus()
                   }}
@@ -843,172 +1011,259 @@ export function WatchlistPage() {
               </div>
             </div>
           ) : (
-            <div data-testid="watchlist-items" className="divide-y rounded-md border bg-card">
-              {filteredItems.map((item) => {
-                const inst = item.instrument
-                const canonicalId = item.canonical_id
-                const hasPos = canonicalId ? positionSet.has(canonicalId) : false
-                const hasOpenOrder = canonicalId ? openOrderSet.has(canonicalId) : false
-                const q = canonicalId ? quoteByCanonicalId.get(canonicalId) : null
-                const ltp = q?.ltp ?? null
-                const chg = q?.change ?? null
-                const chgPct = q?.change_percent ?? null
-                const changeUp = (chgPct ?? chg ?? 0) > 0
-                const changeDown = (chgPct ?? chg ?? 0) < 0
+            <div data-testid="watchlist-items" className="rounded-md border bg-card overflow-hidden">
+              <div className="divide-y">
+                {(q.trim() ? groups.filter((g) => (groupedFilteredItems.get(g.id)?.length ?? 0) > 0) : groups).map((g) => {
+                  const total = groupCounts.get(g.id) ?? 0
+                  const filtered = groupedFilteredItems.get(g.id)?.length ?? 0
+                  const activeGroup = activeId != null && activeGroupId === g.id
+                  const countLabel = q.trim() ? `${filtered}/${total}` : String(total)
+                  const bucket = groupedFilteredItems.get(g.id) ?? []
 
-                return (
-                  <div
-                    key={item.id}
-                    data-testid={`watchlist-row-${item.id}`}
-                    className={cn(
-                      'group flex items-center justify-between gap-3 px-3 py-2',
-                      'hover:bg-accent/20',
-                      isCompact && 'py-1.5',
-                    )}
-                    tabIndex={0}
-                    onMouseLeave={() => setRowMenuOpenId((v) => (v === item.id ? null : v))}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <div className="min-w-0 truncate font-medium">
-                          {isCompact ? compactTitleForItem(item) : titleForItem(item)}
-                        </div>
-                      </div>
-
-                      {!isCompact ? (
-                        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                          <span className="mr-2">
-                            {(inst?.exchange ?? item.exchange) ? (inst?.exchange ?? item.exchange) : '—'}
-                          </span>
-                          <span className="mr-2">{typeLabel(inst, item.instrument_type)}</span>
-                          {inst?.expiry ? <span className="mr-2">• {formatExpiryHuman(inst.expiry)}</span> : null}
-                          {inst?.strike != null ? (
-                            <span className="mr-2">• {formatStrikeHuman(inst.strike, inst.underlying ?? inst.symbol_root)}</span>
-                          ) : null}
-                          {inst?.option_type ? <span className="mr-2">• {inst.option_type}</span> : null}
-                          {hasPos ? <span className="mr-2">• POS</span> : null}
-                          {hasOpenOrder ? <span className="mr-2">• ORD</span> : null}
-                        </div>
-                      ) : inst?.expiry ? (
-                        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                          {formatExpiryHuman(inst.expiry)}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="shrink-0 flex items-center gap-2">
+                  return (
+                    <div key={g.id}>
                       <div
                         className={cn(
-                          'relative flex items-center gap-1 opacity-0 transition-opacity',
-                          'group-hover:opacity-100 group-focus-within:opacity-100',
+                          'flex items-center justify-between gap-2 px-3 py-2',
+                          'border-b bg-muted/20',
+                          activeGroup && 'bg-accent/30',
                         )}
                       >
-                        <Button
+                        <button
                           type="button"
-                          size="icon"
-                          variant="secondary"
-                          className={cn(
-                            'h-7 w-7 text-emerald-800 dark:text-emerald-200',
-                            'bg-emerald-500/10 hover:bg-emerald-500/15',
-                          )}
-                          onClick={() => openTrade(item, 'BUY')}
-                          disabled={!item.instrument && !item.underlying}
-                          aria-label="Buy"
-                          title="Buy"
+                          className="h-6 w-6 rounded-md hover:bg-accent/30 flex items-center justify-center"
+                          aria-label={g.collapsed ? 'Expand group' : 'Collapse group'}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!activeId) return
+                            toggleGroupCollapsed(activeId, g.id)
+                          }}
                         >
-                          B
-                        </Button>
-                        <Button
+                          {g.collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        </button>
+                        <button
                           type="button"
-                          size="icon"
-                          variant="secondary"
-                          className={cn(
-                            'h-7 w-7 text-red-800 dark:text-red-200',
-                            'bg-red-500/10 hover:bg-red-500/15',
-                          )}
-                          onClick={() => openTrade(item, 'SELL')}
-                          disabled={!item.instrument && !item.underlying}
-                          aria-label="Sell"
-                          title="Sell"
+                          className={cn('min-w-0 flex-1 truncate text-left text-sm', activeGroup ? 'font-semibold' : 'font-medium')}
+                          onClick={() => {
+                            if (!activeId) return
+                            setActiveGroup(activeId, g.id)
+                          }}
+                          title={g.name}
                         >
-                          S
-                        </Button>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          aria-label="More"
-                          title="More"
-                          onClick={() => setRowMenuOpenId((v) => (v === item.id ? null : item.id))}
-                          className="h-7 w-7"
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-
-                        {rowMenuOpenId === item.id ? (
-                          <div
-                            className="absolute right-0 top-[44px] z-20 w-44 rounded-md border bg-card p-1 shadow-sm"
-                            onMouseDown={(e) => e.preventDefault()}
-                          >
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent/20"
-                              onClick={() => {
-                                setRowMenuOpenId(null)
-                                navigate(`/orders?q=${encodeURIComponent(item.display_symbol)}`)
-                              }}
-                            >
-                              <ReceiptText className="h-4 w-4" />
-                              Orders
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent/20"
-                              onClick={() => {
-                                setRowMenuOpenId(null)
-                                navigate(`/positions?q=${encodeURIComponent(item.display_symbol)}`)
-                              }}
-                            >
-                              <Briefcase className="h-4 w-4" />
-                              Positions
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent/20"
-                              onClick={() => {
-                                setRowMenuOpenId(null)
-                                if (!activeId) return
-                                void removeItem.mutate({ watchlistId: activeId, itemId: item.id })
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              Remove
-                            </button>
-                          </div>
-                        ) : null}
+                          {g.name}{' '}
+                          <span className="text-[11px] font-normal text-muted-foreground">({countLabel})</span>
+                        </button>
+                        {activeGroup ? <span className="text-[11px] text-muted-foreground">Active</span> : null}
                       </div>
 
-                      <div className={cn('w-[92px] text-right', isCompact && 'w-[70px]')}>
-                        <div className="font-medium tabular-nums">{formatLtp(ltp)}</div>
-                        {!isCompact ? (
-                          <div
-                            className={cn(
-                              'text-[11px] tabular-nums',
-                              changeUp && 'text-emerald-600',
-                              changeDown && 'text-red-600',
-                              !changeUp && !changeDown && 'text-muted-foreground',
-                            )}
-                          >
-                            {formatChangeLine(chg, chgPct)}
-                          </div>
-                        ) : null}
-                      </div>
+                      {!g.collapsed
+                        ? bucket.map((item) => {
+                            const inst = item.instrument
+                            const canonicalId = item.canonical_id
+                            const hasPos = canonicalId ? positionSet.has(canonicalId) : false
+                            const hasOpenOrder = canonicalId ? openOrderSet.has(canonicalId) : false
+                            const q = canonicalId ? quoteByCanonicalId.get(canonicalId) : null
+                            const ltp = q?.ltp ?? null
+                            const chg = q?.change ?? null
+                            const chgPct = q?.change_percent ?? null
+                            const changeUp = (chgPct ?? chg ?? 0) > 0
+                            const changeDown = (chgPct ?? chg ?? 0) < 0
+
+                            return (
+                              <div
+                                key={item.id}
+                                data-testid={`watchlist-row-${item.id}`}
+                                className={cn(
+                                  'group flex items-center justify-between gap-3 px-3 py-2',
+                                  'hover:bg-accent/20',
+                                  isCompact && 'py-1.5',
+                                )}
+                                tabIndex={0}
+                                onMouseLeave={() => setRowMenuOpenId((v) => (v === item.id ? null : v))}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <div className="min-w-0 truncate font-medium">
+                                      {isCompact ? compactTitleForItem(item) : titleForItem(item)}
+                                    </div>
+                                  </div>
+
+                                  {!isCompact ? (
+                                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                      <span className="mr-2">
+                                        {(inst?.exchange ?? item.exchange) ? (inst?.exchange ?? item.exchange) : '—'}
+                                      </span>
+                                      <span className="mr-2">{typeLabel(inst, item.instrument_type)}</span>
+                                      {inst?.expiry ? <span className="mr-2">• {formatExpiryHuman(inst.expiry)}</span> : null}
+                                      {inst?.strike != null ? (
+                                        <span className="mr-2">• {formatStrikeHuman(inst.strike, inst.underlying ?? inst.symbol_root)}</span>
+                                      ) : null}
+                                      {inst?.option_type ? <span className="mr-2">• {inst.option_type}</span> : null}
+                                      {hasPos ? <span className="mr-2">• POS</span> : null}
+                                      {hasOpenOrder ? <span className="mr-2">• ORD</span> : null}
+                                    </div>
+                                  ) : inst?.expiry ? (
+                                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                      {formatExpiryHuman(inst.expiry)}
+                                    </div>
+                                  ) : null}
+                                </div>
+
+                                <div className="shrink-0 flex items-center gap-2">
+                                  <div
+                                    className={cn(
+                                      'relative flex items-center gap-1 opacity-0 transition-opacity',
+                                      'group-hover:opacity-100 group-focus-within:opacity-100',
+                                    )}
+                                  >
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="secondary"
+                                      className={cn(
+                                        'h-7 w-7 text-emerald-800 dark:text-emerald-200',
+                                        'bg-emerald-500/10 hover:bg-emerald-500/15',
+                                      )}
+                                      onClick={() => openTrade(item, 'BUY')}
+                                      disabled={!item.instrument && !item.underlying}
+                                      aria-label="Buy"
+                                      title="Buy"
+                                    >
+                                      B
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="secondary"
+                                      className={cn(
+                                        'h-7 w-7 text-red-800 dark:text-red-200',
+                                        'bg-red-500/10 hover:bg-red-500/15',
+                                      )}
+                                      onClick={() => openTrade(item, 'SELL')}
+                                      disabled={!item.instrument && !item.underlying}
+                                      aria-label="Sell"
+                                      title="Sell"
+                                    >
+                                      S
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      aria-label="More"
+                                      title="More"
+                                      onClick={() => setRowMenuOpenId((v) => (v === item.id ? null : item.id))}
+                                      className="h-7 w-7"
+                                    >
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+
+                                    {rowMenuOpenId === item.id ? (
+                                      <div
+                                        className="absolute right-0 top-[44px] z-20 w-44 rounded-md border bg-card p-1 shadow-sm"
+                                        onMouseDown={(e) => e.preventDefault()}
+                                      >
+                                        <button
+                                          type="button"
+                                          className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent/20"
+                                          onClick={() => {
+                                            setRowMenuOpenId(null)
+                                            navigate(`/orders?q=${encodeURIComponent(item.display_symbol)}`)
+                                          }}
+                                        >
+                                          <ReceiptText className="h-4 w-4" />
+                                          Orders
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent/20"
+                                          onClick={() => {
+                                            setRowMenuOpenId(null)
+                                            navigate(`/positions?q=${encodeURIComponent(item.display_symbol)}`)
+                                          }}
+                                        >
+                                          <Briefcase className="h-4 w-4" />
+                                          Positions
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent/20"
+                                          onClick={() => {
+                                            setRowMenuOpenId(null)
+                                            if (!activeId) return
+                                            const entryKey = item.canonical_id ?? item.symbol_key
+                                            if (!entryKey) return
+                                            void removeItem.mutate({ watchlistId: activeId, itemId: item.id, entryKey })
+                                          }}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                          Remove
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </div>
+
+                                  <div className={cn('w-[92px] text-right', isCompact && 'w-[70px]')}>
+                                    <div className="font-medium tabular-nums">{formatLtp(ltp)}</div>
+                                    {!isCompact ? (
+                                      <div
+                                        className={cn(
+                                          'text-[11px] tabular-nums',
+                                          changeUp && 'text-emerald-600',
+                                          changeDown && 'text-red-600',
+                                          !changeUp && !changeDown && 'text-muted-foreground',
+                                        )}
+                                      >
+                                        {formatChangeLine(chg, chgPct)}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })
+                        : null}
                     </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
             </div>
           )}
+
+          <div className="sticky bottom-0 -mx-4 mt-3 border-t bg-card/95 px-4 py-2 backdrop-blur">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-1 items-center justify-between gap-1">
+                {slotTabs.map((t) => {
+                  const active = t.slot === activeSlot
+                  const disabled = !t.watchlistId
+                  return (
+                    <button
+                      key={t.slot}
+                      type="button"
+                      aria-label={`Watchlist slot ${t.slot}`}
+                      title={t.name}
+                      disabled={disabled}
+                      onClick={() => {
+                        if (!t.watchlistId) return
+                        setActiveSlot(t.slot)
+                        setStoredActiveId(t.watchlistId)
+                        setRowMenuOpenId(null)
+                        setQ('')
+                        setScope('all')
+                      }}
+                      className={cn(
+                        'h-8 w-8 rounded-md text-sm tabular-nums transition-colors',
+                        active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/30 hover:text-foreground',
+                        disabled && 'opacity-50 pointer-events-none',
+                      )}
+                    >
+                      {t.slot}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -1017,7 +1272,7 @@ export function WatchlistPage() {
           <DialogHeader>
             <DialogTitle>Watchlist settings</DialogTitle>
             <DialogDescription>
-              Manage watchlists and defaults. Display/market columns will expand in later milestones.
+              Manage watchlists (slots) and groups. Display/market columns will expand in later milestones.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6">
@@ -1062,107 +1317,216 @@ export function WatchlistPage() {
             <div className="space-y-3">
               <div className="text-sm font-medium">Watchlists</div>
               <div className="space-y-2">
-                {watchlistTabs.map((wl) => (
-                  <div key={wl.id} className="flex items-center justify-between gap-2 rounded-md border px-2 py-2">
-                    <div className="min-w-0 flex-1">
-                      {editingId === wl.id ? (
-                        <Input value={editingName} onChange={(e) => setEditingName(e.target.value)} />
-                      ) : (
-                        <div className="truncate font-medium">{wl.name}</div>
-                      )}
-                      <div className="mt-0.5 text-[11px] text-muted-foreground">
-                        {wl.is_default ? 'Default' : '—'} {activeId === wl.id ? '• Active' : ''}
+                {slotTabs.map((t) => {
+                  const wlId = t.watchlistId
+                  const active = t.slot === activeSlot
+                  const isEditing = wlId != null && editingId === wlId
+                  return (
+                    <div key={t.slot} className="flex items-center justify-between gap-2 rounded-md border px-2 py-2">
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 text-left"
+                        disabled={!wlId}
+                        onClick={() => {
+                          if (!wlId) return
+                          setActiveSlot(t.slot)
+                          setStoredActiveId(wlId)
+                          setSettingsOpen(false)
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={cn('w-5 text-sm tabular-nums', active ? 'text-foreground' : 'text-muted-foreground')}>
+                            {t.slot}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            {isEditing ? (
+                              <Input value={editingName} onChange={(e) => setEditingName(e.target.value)} />
+                            ) : (
+                              <div className="truncate font-medium">{t.name}</div>
+                            )}
+                            <div className="mt-0.5 text-[11px] text-muted-foreground">
+                              {active ? `Active • ${items.length} / ${WATCHLIST_ENTRY_LIMIT}` : '—'}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-1">
+                        {wlId != null && isEditing ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => {
+                                void updateWl.mutate({ id: wlId, name: editingName.trim() })
+                                setEditingId(null)
+                                setEditingName('')
+                              }}
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setEditingId(null)
+                                setEditingName('')
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            aria-label="Rename watchlist"
+                            disabled={wlId == null}
+                            onClick={() => {
+                              if (!wlId) return
+                              setEditingId(wlId)
+                              setEditingName(t.name)
+                            }}
+                          >
+                            <Pencil />
+                          </Button>
+                        )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void updateWl.mutate({ id: wl.id, is_default: true })}
-                        disabled={wl.is_default}
-                      >
-                        ★
-                      </Button>
-                      {editingId === wl.id ? (
-                        <>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => {
-                              void updateWl.mutate({ id: wl.id, name: editingName.trim() })
-                              setEditingId(null)
-                              setEditingName('')
-                            }}
-                          >
-                            Save
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setEditingId(null)
-                              setEditingName('')
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="outline"
-                          aria-label="Rename watchlist"
-                          onClick={() => {
-                            setEditingId(wl.id)
-                            setEditingName(wl.name)
-                          }}
-                        >
-                          <Pencil />
-                        </Button>
-                      )}
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="outline"
-                        aria-label="Delete watchlist"
-                        onClick={() => void deleteWl.mutate(wl.id)}
-                        disabled={watchlistTabs.length <= 1}
-                      >
-                        <Trash2 />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
 
             <div className="space-y-3">
-              <div className="text-sm font-medium">Create</div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New watchlist name" />
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={makeDefault}
-                    onChange={(e) => setMakeDefault(e.target.checked)}
-                  />
-                  Make default
-                </label>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-medium">Groups</div>
+                <div className="text-[11px] text-muted-foreground tabular-nums">
+                  {items.length} / {WATCHLIST_ENTRY_LIMIT}
+                </div>
+              </div>
+              <div className="space-y-2">
+                {(groups.length ? groups : [{ id: 'default', name: 'Default', collapsed: false, sort_order: 0 }]).map((g) => {
+                  const total = groupCounts.get(g.id) ?? 0
+                  const groupActive = activeGroupId === g.id
+                  const isEditing = editingGroupId === g.id
+                  const disableDelete = g.id === 'default' || total > 0
+
+                  return (
+                    <div key={g.id} className={cn('flex items-center justify-between gap-2 rounded-md border px-2 py-2', groupActive && 'bg-accent/20')}>
+                      <div className="min-w-0 flex-1">
+                        {isEditing ? (
+                          <Input value={editingGroupName} onChange={(e) => setEditingGroupName(e.target.value)} />
+                        ) : (
+                          <button
+                            type="button"
+                            className="truncate font-medium text-left"
+                            onClick={() => {
+                              if (!activeId) return
+                              setActiveGroup(activeId, g.id)
+                            }}
+                            title="Set active group"
+                          >
+                            {g.name}
+                          </button>
+                        )}
+                        <div className="mt-0.5 text-[11px] text-muted-foreground">
+                          {groupActive ? 'Active • ' : ''}{total} items {g.collapsed ? '• Collapsed' : ''}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          aria-label={g.collapsed ? 'Expand group' : 'Collapse group'}
+                          onClick={() => {
+                            if (!activeId) return
+                            toggleGroupCollapsed(activeId, g.id)
+                          }}
+                        >
+                          {g.collapsed ? 'Expand' : 'Collapse'}
+                        </Button>
+                        {isEditing ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => {
+                                if (!activeId) return
+                                renameGroup(activeId, g.id, editingGroupName)
+                                setEditingGroupId(null)
+                                setEditingGroupName('')
+                              }}
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setEditingGroupId(null)
+                                setEditingGroupName('')
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            aria-label="Rename group"
+                            onClick={() => {
+                              setEditingGroupId(g.id)
+                              setEditingGroupName(g.name)
+                            }}
+                          >
+                            <Pencil />
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          aria-label="Delete group"
+                          disabled={disableDelete}
+                          onClick={() => {
+                            if (!activeId) return
+                            if (disableDelete) {
+                              setBanner('Group must be empty to delete')
+                              return
+                            }
+                            deleteGroup(activeId, g.id)
+                          }}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="flex items-center gap-2">
+                <Input value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="New group name" />
                 <Button
                   type="button"
                   onClick={() => {
-                    const name = newName.trim()
+                    if (!activeId) return
+                    const name = newGroupName.trim()
                     if (!name) return
-                    void createWl.mutate({ name, make_default: makeDefault })
-                    setNewName('')
-                    setMakeDefault(false)
+                    createGroup(activeId, name)
+                    setNewGroupName('')
                   }}
                 >
-                  Create
+                  Create group
                 </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Delete is allowed only when a group has 0 items. Default group cannot be deleted.
               </div>
             </div>
           </div>
