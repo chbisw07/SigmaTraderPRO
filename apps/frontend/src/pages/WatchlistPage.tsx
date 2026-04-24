@@ -710,16 +710,22 @@ export function WatchlistPage() {
       ) : null}
 
       <Card>
-        <CardHeader className={cn('space-y-4', isCompact && 'space-y-3')}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex-1 min-w-[140px] space-y-1">
-              <CardTitle className={cn('text-base', isCompact && 'text-sm')}>Watchlist</CardTitle>
-              {!isCompact ? (
-                <div className="text-xs text-muted-foreground truncate whitespace-nowrap">
-                  Fast Buy/Sell actions. Quotes will layer in later.
-                </div>
-              ) : null}
-            </div>
+	        <CardHeader className={cn('space-y-4', isCompact && 'space-y-3')}>
+	          <div className="flex flex-wrap items-start justify-between gap-3">
+	            <div className="flex-1 min-w-[140px] space-y-1">
+	              <CardTitle className={cn('text-base', isCompact && 'text-sm')}>Watchlist</CardTitle>
+	              <div className={cn('truncate font-medium', isCompact ? 'text-sm' : 'text-base')}>
+	                {activeWatchlist?.name ?? `Watchlist ${activeSlot}`}
+	              </div>
+	              <div className={cn('truncate text-[11px] text-muted-foreground', isCompact && 'text-[10px]')}>
+	                Slot {activeSlot} • Group: {activeGroupName}
+	              </div>
+	              {!isCompact ? (
+	                <div className="text-xs text-muted-foreground truncate whitespace-nowrap">
+	                  Fast Buy/Sell actions. Quotes will layer in later.
+	                </div>
+	              ) : null}
+	            </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
               <div className="flex items-center gap-2 text-sm">
@@ -759,26 +765,12 @@ export function WatchlistPage() {
               >
                 <Settings />
               </Button>
-            </div>
-          </div>
+	            </div>
+	          </div>
 
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium">
-                {activeWatchlist?.name ?? `Watchlist ${activeSlot}`}
-              </div>
-              <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                Slot {activeSlot} • Group: {activeGroupName}
-              </div>
-            </div>
-            <div className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
-              {items.length} / {WATCHLIST_ENTRY_LIMIT}
-            </div>
-          </div>
-
-          <div className="relative">
-            <div className="flex items-center gap-2">
-              <Input
+	          <div className="relative">
+	            <div className="flex items-center gap-2">
+	              <Input
                 ref={(el) => {
                   inputRef.current = el
                 }}
