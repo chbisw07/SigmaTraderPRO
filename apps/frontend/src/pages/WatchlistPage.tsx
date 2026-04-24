@@ -1323,33 +1323,53 @@ export function WatchlistPage() {
                   const isEditing = wlId != null && editingId === wlId
                   return (
                     <div key={t.slot} className="flex items-center justify-between gap-2 rounded-md border px-2 py-2">
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 text-left"
-                        disabled={!wlId}
-                        onClick={() => {
-                          if (!wlId) return
-                          setActiveSlot(t.slot)
-                          setStoredActiveId(wlId)
-                          setSettingsOpen(false)
-                        }}
-                      >
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <div className={cn('w-5 text-sm tabular-nums', active ? 'text-foreground' : 'text-muted-foreground')}>
                             {t.slot}
                           </div>
                           <div className="min-w-0 flex-1">
                             {isEditing ? (
-                              <Input value={editingName} onChange={(e) => setEditingName(e.target.value)} />
+                              <Input
+                                value={editingName}
+                                onChange={(e) => setEditingName(e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => {
+                                  if (!wlId) return
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault()
+                                    void updateWl.mutate({ id: wlId, name: editingName.trim() })
+                                    setEditingId(null)
+                                    setEditingName('')
+                                  }
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault()
+                                    setEditingId(null)
+                                    setEditingName('')
+                                  }
+                                }}
+                              />
                             ) : (
-                              <div className="truncate font-medium">{t.name}</div>
+                              <button
+                                type="button"
+                                className="w-full truncate text-left font-medium hover:underline"
+                                disabled={!wlId}
+                                onClick={() => {
+                                  if (!wlId) return
+                                  setActiveSlot(t.slot)
+                                  setStoredActiveId(wlId)
+                                  setSettingsOpen(false)
+                                }}
+                              >
+                                {t.name}
+                              </button>
                             )}
                             <div className="mt-0.5 text-[11px] text-muted-foreground">
                               {active ? `Active • ${items.length} / ${WATCHLIST_ENTRY_LIMIT}` : '—'}
                             </div>
                           </div>
                         </div>
-                      </button>
+                      </div>
                       <div className="flex items-center gap-1">
                         {wlId != null && isEditing ? (
                           <>
@@ -1357,6 +1377,7 @@ export function WatchlistPage() {
                               type="button"
                               size="sm"
                               onClick={() => {
+                                if (!wlId) return
                                 void updateWl.mutate({ id: wlId, name: editingName.trim() })
                                 setEditingId(null)
                                 setEditingName('')
@@ -1369,6 +1390,7 @@ export function WatchlistPage() {
                               size="sm"
                               variant="outline"
                               onClick={() => {
+                                if (!wlId) return
                                 setEditingId(null)
                                 setEditingName('')
                               }}
@@ -1383,7 +1405,9 @@ export function WatchlistPage() {
                             variant="outline"
                             aria-label="Rename watchlist"
                             disabled={wlId == null}
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
                               if (!wlId) return
                               setEditingId(wlId)
                               setEditingName(t.name)
