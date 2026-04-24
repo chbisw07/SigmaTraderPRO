@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 
 import { TopNav } from '@/components/shell/TopNav'
@@ -18,20 +18,11 @@ export function RootLayout() {
 
   const mode = useWatchlistLayoutStore((s) => s.mode)
   const widthByMode = useWatchlistLayoutStore((s) => s.widthByMode)
-  const setWidth = useWatchlistLayoutStore((s) => s.setWidth)
   const spec = WATCHLIST_WIDTH_SPECS[mode]
   const viewportCapPx = Math.floor(viewportWidth * 0.3)
   const maxPx = Math.min(spec.max, Math.max(spec.min, viewportCapPx))
   const minPx = spec.min
   const widthPx = clampWidth(widthByMode[mode] ?? spec.preset, minPx, maxPx)
-
-  const [dragging, setDragging] = useState(false)
-  const dragStartX = useRef(0)
-  const dragStartWidth = useRef(widthPx)
-
-  useEffect(() => {
-    dragStartWidth.current = widthPx
-  }, [widthPx])
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth)
@@ -39,37 +30,22 @@ export function RootLayout() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  useEffect(() => {
-    if (!dragging) return
-
-    const onMove = (e: MouseEvent) => {
-      const dx = e.clientX - dragStartX.current
-      setWidth(mode, clampWidth(dragStartWidth.current + dx, minPx, maxPx))
-    }
-
-    const onUp = () => setDragging(false)
-
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-  }, [dragging, mode, maxPx, minPx, setWidth])
-
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <header className="flex h-14 items-center justify-between border-b bg-background px-4">
+      <header
+        className={cn(
+          'flex h-16 items-center justify-between border-b px-4',
+          'bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/70',
+          'shadow-sm',
+        )}
+      >
         <div className="flex min-w-0 items-center gap-4">
           <Link to="/search" className="flex min-w-0 items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md border bg-background text-sm font-semibold">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-sm font-semibold text-primary">
               Σ
             </div>
             <div className="hidden sm:block min-w-0">
-              <div className="truncate text-sm font-semibold">SigmaTraderPRO</div>
-              <div className="truncate text-[11px] text-muted-foreground">
-                ML1 • Terminal
-              </div>
+              <div className="truncate text-sm font-semibold tracking-tight">SigmaTraderPRO</div>
             </div>
           </Link>
 
@@ -81,7 +57,7 @@ export function RootLayout() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="hidden sm:inline-flex">
+          <Badge variant="outline" className="hidden sm:inline-flex text-[10px] text-muted-foreground">
             Dev
           </Badge>
           <ThemeSelect />
@@ -92,7 +68,7 @@ export function RootLayout() {
       <div className="flex flex-1 min-h-0">
         <aside
           className={cn(
-            'hidden md:block shrink-0 border-r bg-card/30',
+            'hidden md:block shrink-0 bg-background',
           )}
           style={{ width: widthPx, minWidth: minPx, maxWidth: maxPx }}
         >
@@ -101,23 +77,11 @@ export function RootLayout() {
           </div>
         </aside>
 
-        <div
-          className={cn(
-            'hidden md:block w-1 shrink-0 cursor-col-resize bg-transparent',
-            dragging ? 'bg-accent/50' : 'hover:bg-accent/30',
-          )}
-          role="separator"
-          aria-label="Resize watchlist"
-          onMouseDown={(e) => {
-            setDragging(true)
-            dragStartX.current = e.clientX
-            dragStartWidth.current = widthPx
-          }}
-        />
-
         <div className="flex min-w-0 flex-1 flex-col">
-          <main className="flex-1 min-h-0 overflow-auto p-4">
-            <Outlet />
+          <main className="flex-1 min-h-0 overflow-hidden p-3">
+            <div className="h-full min-h-0 overflow-auto rounded-xl bg-card px-3 pb-3 pt-2">
+              <Outlet />
+            </div>
           </main>
         </div>
       </div>

@@ -157,7 +157,7 @@ def test_stock_order_preview_validates_and_returns_routing(
         InstrumentMapping(
             instrument_id=inst.id,
             broker_key="angel",
-            broker_instrument_id="1594",
+            broker_instrument_id="NSE:1594",
             broker_trading_symbol="INFY-EQ",
             raw={},
             is_active=True,
@@ -205,7 +205,7 @@ def test_stock_order_create_places_order_with_mocked_broker(
         InstrumentMapping(
             instrument_id=inst.id,
             broker_key="angel",
-            broker_instrument_id="11536",
+            broker_instrument_id="NSE:11536",
             broker_trading_symbol="TCS-EQ",
             raw={},
             is_active=True,
@@ -284,7 +284,7 @@ def test_stock_order_create_blocks_when_broker_session_missing(
         InstrumentMapping(
             instrument_id=inst.id,
             broker_key="angel",
-            broker_instrument_id="3045",
+            broker_instrument_id="NSE:3045",
             broker_trading_symbol="SBIN-EQ",
             raw={},
             is_active=True,
@@ -352,7 +352,7 @@ def test_stock_order_create_blocks_when_broker_session_stale(
         InstrumentMapping(
             instrument_id=inst.id,
             broker_key="angel",
-            broker_instrument_id="1660",
+            broker_instrument_id="NSE:1660",
             broker_trading_symbol="ITC-EQ",
             raw={},
             is_active=True,
@@ -401,7 +401,7 @@ def test_stock_order_create_persists_dispatch_failure(
         InstrumentMapping(
             instrument_id=inst.id,
             broker_key="angel",
-            broker_instrument_id="1333",
+            broker_instrument_id="NSE:1333",
             broker_trading_symbol="HDFCBANK-EQ",
             raw={},
             is_active=True,

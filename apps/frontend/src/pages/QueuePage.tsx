@@ -238,22 +238,14 @@ export function QueuePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Queue</h1>
-          <p className="text-sm text-muted-foreground">
-            Execution-intent ingestion queue (manual review / auto dispatch).
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      <div className="rounded-md border bg-card p-3">
+        <h1 className="sr-only">Queue</h1>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-medium">Filters</div>
           <Button type="button" variant="outline" size="sm" onClick={() => void queue.refetch()} disabled={queue.isFetching}>
             {queue.isFetching ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>
-      </div>
-
-      <div className="rounded-md border bg-card p-3">
-        <div className="text-sm font-medium">Filters</div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Input
             aria-label="Queue search"
@@ -266,7 +258,10 @@ export function QueuePage() {
             aria-label="Queue status filter"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="">All statuses</option>
             <option value="ready">Ready</option>
@@ -282,7 +277,10 @@ export function QueuePage() {
             aria-label="Queue resolution filter"
             value={resolutionState}
             onChange={(e) => setResolutionState(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(
+              'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
             <option value="">All resolution</option>
             <option value="resolved">Resolved</option>
@@ -310,8 +308,8 @@ export function QueuePage() {
 
       <div className="rounded-md border bg-card">
         <div className="overflow-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-card">
+          <table className="w-full border-collapse text-[13px] tabular-nums">
+            <thead className="sticky top-0 z-10 bg-card/95 backdrop-blur">
               <tr className="border-b">
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Time</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Source</th>
@@ -336,7 +334,7 @@ export function QueuePage() {
                 const unresolvedFields = Array.isArray(resolution.unresolved_fields) ? (resolution.unresolved_fields as string[]) : undefined
                 const isUnresolved = item.resolution_state === 'unresolved' || (item.resolution_state == null && (item.validation_state === 'blocked' && unresolvedFields?.length))
                 return (
-                  <tr key={item.id} className="border-b hover:bg-muted/30">
+                  <tr key={item.id} className="border-b transition-colors hover:bg-accent/30">
                     <td className="px-3 py-2 text-xs text-muted-foreground">{new Date(item.created_at).toLocaleString()}</td>
                     <td className="px-3 py-2">
                       <Badge variant="outline">{item.source_type}</Badge>
@@ -505,7 +503,10 @@ export function QueuePage() {
                   <select
                     value={resolveBroker}
                     onChange={(e) => setResolveBroker(e.target.value)}
-                    className={cn('h-10 w-full rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+                    className={cn(
+                      'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
                   >
                     <option value="">(unresolved)</option>
                     <option value="angel">Angel</option>
@@ -523,12 +524,12 @@ export function QueuePage() {
                     placeholder="Search instrument…"
                   />
                   {instrumentSearchQuery.data?.items?.length ? (
-                    <div className="max-h-40 overflow-auto rounded-md border bg-background">
+                    <div className="max-h-40 overflow-auto rounded-md border bg-card shadow-sm">
                       {instrumentSearchQuery.data.items.map((inst) => (
                         <button
                           key={inst.canonical_id}
                           type="button"
-                          className="block w-full px-2 py-1 text-left text-sm hover:bg-muted/40"
+                          className="block w-full px-2 py-1 text-left text-sm hover:bg-accent/40"
                           onClick={() => {
                             setSelectedInstrument(inst)
                             setInstrumentSearch(inst.display_symbol)
@@ -551,7 +552,10 @@ export function QueuePage() {
                   <select
                     value={resolveProduct}
                     onChange={(e) => setResolveProduct(e.target.value)}
-                    className={cn('h-10 w-full rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+                    className={cn(
+                      'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
                   >
                     <option value="">(unresolved)</option>
                     <option value="CNC">CNC</option>
@@ -564,7 +568,10 @@ export function QueuePage() {
                   <select
                     value={resolveOrderType}
                     onChange={(e) => setResolveOrderType(e.target.value)}
-                    className={cn('h-10 w-full rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
+                    className={cn(
+                      'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
                   >
                     <option value="">(unresolved)</option>
                     <option value="MARKET">MARKET</option>

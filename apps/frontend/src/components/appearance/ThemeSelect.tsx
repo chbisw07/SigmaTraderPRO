@@ -18,7 +18,8 @@ export function ThemeSelect({ className, compact = true }: ThemeSelectProps) {
         value={theme}
         onChange={(e) => setTheme(e.target.value as ThemePreference)}
         className={cn(
-          'h-9 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none',
+          'shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           compact && 'h-8 text-xs',
         )}
         aria-label="Theme"
@@ -32,4 +33,3 @@ export function ThemeSelect({ className, compact = true }: ThemeSelectProps) {
     </label>
   )
 }
-

@@ -107,6 +107,20 @@ def _map_instrument_zerodha(db: Session, inst: Instrument) -> None:
     db.commit()
 
 
+def _map_instrument_angel(db: Session, inst: Instrument) -> None:
+    db.add(
+        InstrumentMapping(
+            instrument_id=inst.id,
+            broker_key="angel",
+            broker_instrument_id="NSE:1467",
+            broker_trading_symbol=f"{inst.symbol_root}-EQ",
+            raw={},
+            is_active=True,
+        )
+    )
+    db.commit()
+
+
 def test_positions_sync_endpoint_upserts_positions(
     db_session: Session, client: TestClient, monkeypatch
 ) -> None:
@@ -161,3 +175,57 @@ def test_positions_sync_endpoint_upserts_positions(
     assert len(items) == 1
     assert items[0]["canonical_id"] == inst.canonical_id
     assert items[0]["quantity"] == 10
+
+
+def test_positions_sync_resolves_angel_cash_tradingsymbol_without_eq_suffix(
+    db_session: Session, client: TestClient, monkeypatch
+) -> None:
+    _create_user(db_session, email="a@example.com", password="pass123")
+    access = _login(client, "a@example.com", "pass123")
+
+    inst = _ensure_instrument(db_session, "NSE_EQ:EQUITY:EQUITY:TCS")
+    _map_instrument_angel(db_session, inst)
+
+    class _FakeAdapter:
+        display_name = "Angel One"
+
+        def fetch_positions(self, db, user):
+            _ = (db, user)
+            return [
+                ExternalBrokerPosition(
+                    broker="angel",
+                    broker_position_id="pos-1",
+                    exchange="NSECM",
+                    trading_symbol="TCS",
+                    broker_instrument_id=None,
+                    net_quantity=5,
+                    avg_price=3000.0,
+                    last_price=3010.0,
+                    realized_pnl=None,
+                    unrealized_pnl=50.0,
+                    mtm=50.0,
+                )
+            ]
+
+    monkeypatch.setattr(
+        "app.services.position_service.broker_service.get_adapter",
+        lambda broker: _FakeAdapter(),
+    )
+
+    sync = client.post(
+        "/api/v1/positions/sync?broker=angel",
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert sync.status_code == 200
+    assert sync.json()["synced"] == 1
+    assert sync.json()["skipped_unmapped"] == 0
+
+    resp = client.get(
+        "/api/v1/positions?broker=angel",
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["canonical_id"] == inst.canonical_id
+    assert items[0]["quantity"] == 5

@@ -30,7 +30,7 @@ export function UserMenu() {
       </Button>
       <div
         className={cn(
-          'absolute right-0 mt-2 w-56 rounded-md border bg-card p-2 shadow-sm',
+          'absolute right-0 mt-2 w-60 rounded-lg border bg-card p-2 shadow-lg',
           'z-50',
         )}
       >

@@ -1,11 +1,10 @@
 export function StrategiesPage() {
   return (
     <div className="space-y-2">
-      <h1 className="text-2xl font-semibold">Strategies</h1>
-      <p className="text-sm text-muted-foreground">
-        Placeholder route for strategy configuration and runs.
-      </p>
+      <div className="rounded-md border bg-card p-4 text-sm text-muted-foreground">
+        <h1 className="sr-only">Strategies</h1>
+        Strategies UI is coming soon.
+      </div>
     </div>
   )
 }
-

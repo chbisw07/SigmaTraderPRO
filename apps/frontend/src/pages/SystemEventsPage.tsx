@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { SlidersHorizontal } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import * as systemEventsApi from '@/lib/api/systemEvents'
@@ -33,6 +34,16 @@ export function SystemEventsPage() {
   const [category, setCategory] = useState('')
   const [level, setLevel] = useState('')
   const [keepDays, setKeepDays] = useState(7)
+
+  const activeFilterCount = useMemo(() => {
+    return (q.trim() ? 1 : 0) + (category.trim() ? 1 : 0) + (level.trim() ? 1 : 0)
+  }, [category, level, q])
+
+  const clearAllFilters = () => {
+    setQ('')
+    setCategory('')
+    setLevel('')
+  }
 
   const events = useQuery<systemEventsApi.SystemEventsListResponse>({
     queryKey: ['system-events', { q, category, level }],
@@ -68,16 +79,86 @@ export function SystemEventsPage() {
   }, [rows])
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">System Events</h1>
-          <div className="text-sm text-muted-foreground">Recent backend events (alerts, orders, broker).</div>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-3 shadow-sm">
+        <h1 className="sr-only">System Events</h1>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search message / correlation id…"
+            className="h-9 w-[420px] max-w-full"
+          />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="h-9">
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+                {activeFilterCount ? (
+                  <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1 text-[11px] font-medium text-foreground">
+                    {activeFilterCount}
+                  </span>
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[520px] max-w-[92vw] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold">Filters</div>
+                <Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs text-muted-foreground" onClick={clearAllFilters}>
+                  Clear all
+                </Button>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground">Category</div>
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className={cn(
+                      'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
+                  >
+                    <option value="">All</option>
+                    <option value="order_dispatch">order_dispatch</option>
+                    {categories
+                      .filter((c) => c !== 'order_dispatch')
+                      .slice(0, 50)
+                      .map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground">Level</div>
+                  <select
+                    value={level}
+                    onChange={(e) => setLevel(e.target.value)}
+                    className={cn(
+                      'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
+                  >
+                    <option value="">All</option>
+                    {['INFO', 'WARNING', 'ERROR'].map((l) => (
+                      <option key={l} value={l}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
+
         <div className="flex items-center gap-2">
           <Input
             aria-label="Keep last (days)"
-            className="w-[120px]"
+            className="h-9 w-[120px]"
             type="number"
             min={1}
             max={365}
@@ -100,46 +181,6 @@ export function SystemEventsPage() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Filters</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search message / correlation id…" className="w-80" />
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All categories</option>
-            <option value="order_dispatch">order_dispatch</option>
-            {categories
-              .filter((c) => c !== 'order_dispatch')
-              .slice(0, 50)
-              .map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-          </select>
-          <select
-            value={level}
-            onChange={(e) => setLevel(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All levels</option>
-            {['INFO', 'WARNING', 'ERROR'].map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-          <Button type="button" variant="outline" size="sm" onClick={() => { setQ(''); setCategory(''); setLevel('') }}>
-            Clear
-          </Button>
-        </CardContent>
-      </Card>
-
       <div className="rounded-lg border bg-card">
         <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
           <div className="text-sm font-medium">Latest first</div>
@@ -147,8 +188,8 @@ export function SystemEventsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground">
+          <table className="w-full text-[13px] tabular-nums">
+            <thead className="sticky top-0 z-10 bg-card/95 text-[11px] font-semibold text-muted-foreground backdrop-blur">
               <tr className="border-b">
                 <th className="px-3 py-2 text-left">Time</th>
                 <th className="px-3 py-2 text-left">Level</th>
@@ -159,7 +200,7 @@ export function SystemEventsPage() {
             </thead>
             <tbody className="divide-y">
               {rows.map((e) => (
-                <tr key={e.id} className="hover:bg-accent/20">
+                <tr key={e.id} className="transition-colors hover:bg-accent/30">
                   <td className="px-3 py-2 text-xs text-muted-foreground">
                     {e.created_at ? new Date(e.created_at).toLocaleString() : '—'}
                   </td>

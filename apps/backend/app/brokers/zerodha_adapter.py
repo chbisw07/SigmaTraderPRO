@@ -24,7 +24,7 @@ from app.brokers.zerodha_client import (
 from app.core.config import settings
 from app.core.crypto import CryptoError, decrypt_json, encrypt_json
 from app.core.logger import get_logger, log_event
-from app.core.time import today_ist
+from app.core.time import IST, today_ist
 from app.models.broker_connection import BrokerConnection
 from app.models.user import User
 from app.orders.types import (
@@ -469,6 +469,11 @@ class ZerodhaAdapter(BrokerAdapter):
                     if " " in s and "T" not in s:
                         s = s.replace(" ", "T", 1)
                     placed_at = datetime.fromisoformat(s)
+                    # Zerodha timestamps are generally in IST but often arrive
+                    # without an explicit offset. Interpret naive datetimes as
+                    # IST and normalize to UTC for storage/transport.
+                    if placed_at.tzinfo is None:
+                        placed_at = placed_at.replace(tzinfo=IST).astimezone(UTC)
                 except Exception:
                     placed_at = None
 

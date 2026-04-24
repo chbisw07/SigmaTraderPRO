@@ -1,10 +1,12 @@
 import { type ComponentProps, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { SlidersHorizontal } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import * as holdingsApi from '@/lib/api/holdings'
@@ -26,6 +28,13 @@ export function HoldingsPage() {
 
   const [q, setQ] = useState('')
   const [broker, setBroker] = useState<'angel' | 'zerodha' | ''>('')
+
+  const activeFilterCount = useMemo(() => (q.trim() ? 1 : 0) + (broker ? 1 : 0), [broker, q])
+
+  const clearAllFilters = () => {
+    setQ('')
+    setBroker('')
+  }
 
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
   const [stockLaunch, setStockLaunch] = useState<ComponentProps<typeof StockOrderDialog>['launch'] | null>(null)
@@ -192,11 +201,60 @@ export function HoldingsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Holdings</h1>
-          <p className="text-sm text-muted-foreground">Broker holdings inventory (delivery/long-term). Values reflect broker snapshots.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-3 shadow-sm">
+        <h1 className="sr-only">Holdings</h1>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search symbol / ISIN / canonical id…"
+            className="h-9 w-[420px] max-w-full"
+          />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="h-9">
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+                {activeFilterCount ? (
+                  <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1 text-[11px] font-medium text-foreground">
+                    {activeFilterCount}
+                  </span>
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[440px] max-w-[92vw] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold">Filters</div>
+                <Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs text-muted-foreground" onClick={clearAllFilters}>
+                  Clear all
+                </Button>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground">Broker</div>
+                  <select
+                    value={broker}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
+                      else setBroker('')
+                    }}
+                    className={cn(
+                      'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                      'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    )}
+                  >
+                    <option value="">All</option>
+                    <option value="angel">Angel One</option>
+                    <option value="zerodha">Zerodha</option>
+                  </select>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
+
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => void holdings.refetch()} disabled={holdings.isFetching}>
             {holdings.isFetching ? 'Refreshing…' : 'Refresh'}
@@ -251,31 +309,6 @@ export function HoldingsPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Filters</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search symbol / ISIN / canonical id…" className="w-80" />
-          <select
-            value={broker}
-            onChange={(e) => {
-              const v = e.target.value
-              if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
-              else setBroker('')
-            }}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All brokers</option>
-            <option value="angel">Angel One</option>
-            <option value="zerodha">Zerodha</option>
-          </select>
-          <Button type="button" variant="outline" size="sm" onClick={() => { setQ(''); setBroker('') }}>
-            Clear
-          </Button>
-        </CardContent>
-      </Card>
-
       <div className="rounded-lg border bg-card">
         <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
           <div className="text-sm font-medium">Holdings</div>
@@ -283,8 +316,8 @@ export function HoldingsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground">
+          <table className="w-full text-[13px] tabular-nums">
+            <thead className="sticky top-0 z-10 bg-card/95 text-[11px] font-semibold text-muted-foreground backdrop-blur">
               <tr className="border-b">
                 <th className="px-3 py-2 text-left">Symbol</th>
                 <th className="px-3 py-2 text-left">Actions</th>
@@ -307,7 +340,7 @@ export function HoldingsPage() {
                 return (
                   <tr
                     key={h.row_id}
-                    className="hover:bg-accent/20"
+                    className="transition-colors hover:bg-accent/30"
                   >
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">

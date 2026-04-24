@@ -16,12 +16,17 @@ from app.brokers.angel_client import (
     login_by_password,
     place_order,
 )
+from app.brokers.angel_instrument_id import (
+    decode_angel_instrument_id,
+    encode_angel_instrument_id,
+    normalize_angel_exch_seg,
+)
 from app.brokers.base import BrokerAdapter, BrokerError, BrokerNotConfiguredError
 from app.brokers.types import BrokerKey, BrokerSessionState, BrokerStatus
 from app.core.config import settings
 from app.core.crypto import CryptoError, decrypt_json, encrypt_json
 from app.core.logger import get_logger, log_event
-from app.core.time import today_ist
+from app.core.time import IST, today_ist
 from app.models.broker_connection import BrokerConnection
 from app.models.user import User
 from app.orders.types import (
@@ -38,6 +43,69 @@ from app.orders.types import (
 )
 
 logger = get_logger(__name__)
+
+
+def _parse_order_timestamp(ts: object) -> datetime | None:
+    if not ts:
+        return None
+    if isinstance(ts, datetime):
+        return ts
+
+    if isinstance(ts, (int, float)):
+        v = float(ts)
+        # Heuristic: treat 13+ digit epochs as milliseconds.
+        if v > 1_000_000_000_000:
+            v = v / 1000.0
+        try:
+            return datetime.fromtimestamp(v, tz=UTC)
+        except Exception:
+            return None
+
+    s = str(ts).strip()
+    if not s:
+        return None
+
+    if s.isdigit():
+        try:
+            v = float(s)
+            if v > 1_000_000_000_000:
+                v = v / 1000.0
+            return datetime.fromtimestamp(v, tz=UTC)
+        except Exception:
+            return None
+
+    # Common formats: "2026-04-10 09:15:00" or ISO.
+    try:
+        fixed = s.replace("Z", "+00:00")
+        if " " in fixed and "T" not in fixed:
+            fixed = fixed.replace(" ", "T", 1)
+        dt = datetime.fromisoformat(fixed)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=IST).astimezone(UTC)
+        return dt
+    except Exception:
+        pass
+
+    # Broker SDKs sometimes return non-ISO formats.
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y %H:%M",
+        "%d-%b-%Y %H:%M:%S",
+        "%d-%b-%Y %H:%M",
+        "%d %b %Y %H:%M:%S",
+        "%d %b %Y %H:%M",
+    ):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.replace(tzinfo=IST).astimezone(UTC)
+        except Exception:
+            continue
+
+    return None
 
 
 def _get_connection(db: Session, user_id: int) -> BrokerConnection | None:
@@ -457,19 +525,26 @@ class AngelAdapter(BrokerAdapter):
             symbol_token = row.get("symboltoken") or row.get("symbolToken")
             exchange = row.get("exchange") or row.get("exch_seg")
 
-            placed_at = None
+            broker_instrument_id = encode_angel_instrument_id(
+                exch_seg=exchange, token=str(symbol_token) if symbol_token else None
+            )
+
             ts = (
                 row.get("updatetime")
+                or row.get("updateTime")
                 or row.get("orderdatetime")
+                or row.get("orderDateTime")
                 or row.get("orderTime")
+                or row.get("order_timestamp")
+                or row.get("orderTimestamp")
+                or row.get("exchtime")
+                or row.get("exchTime")
+                or row.get("exchange_timestamp")
+                or row.get("exchangeTimestamp")
+                or row.get("created_at")
+                or row.get("createdAt")
             )
-            if ts:
-                try:
-                    # Common formats: "2026-04-10 09:15:00" or ISO.
-                    s = str(ts).replace("Z", "+00:00").replace(" ", "T", 1)
-                    placed_at = datetime.fromisoformat(s)
-                except Exception:
-                    placed_at = None
+            placed_at = _parse_order_timestamp(ts)
 
             qty = None
             try:
@@ -500,7 +575,8 @@ class AngelAdapter(BrokerAdapter):
                     ),
                     exchange=str(exchange) if exchange else None,
                     trading_symbol=str(trading_symbol) if trading_symbol else None,
-                    broker_instrument_id=str(symbol_token) if symbol_token else None,
+                    broker_instrument_id=broker_instrument_id
+                    or (str(symbol_token) if symbol_token else None),
                     placed_at=placed_at,
                     side=str(
                         row.get("transactiontype") or row.get("transactionType") or ""
@@ -551,10 +627,24 @@ class AngelAdapter(BrokerAdapter):
 
         out: list[ExternalBrokerPosition] = []
         for row in rows:
-            trading_symbol = row.get("tradingsymbol") or row.get("tradingSymbol")
-            symbol_token = row.get("symboltoken") or row.get("symbolToken")
+            trading_symbol = (
+                row.get("tradingsymbol")
+                or row.get("tradingSymbol")
+                or row.get("symbol")
+                or row.get("trading_symbol")
+            )
+            symbol_token = (
+                row.get("symboltoken")
+                or row.get("symbolToken")
+                or row.get("token")
+                or row.get("symbol_token")
+            )
             exchange = row.get("exchange") or row.get("exch_seg")
             broker_position_id = row.get("positionid") or row.get("positionId")
+
+            broker_instrument_id = encode_angel_instrument_id(
+                exch_seg=exchange, token=str(symbol_token) if symbol_token else None
+            )
 
             net_qty = 0
             try:
@@ -615,7 +705,8 @@ class AngelAdapter(BrokerAdapter):
                     ),
                     exchange=str(exchange) if exchange else None,
                     trading_symbol=str(trading_symbol) if trading_symbol else None,
-                    broker_instrument_id=str(symbol_token) if symbol_token else None,
+                    broker_instrument_id=broker_instrument_id
+                    or (str(symbol_token) if symbol_token else None),
                     net_quantity=net_qty,
                     avg_price=avg_price,
                     last_price=last_price,
@@ -655,8 +746,16 @@ class AngelAdapter(BrokerAdapter):
         # Preserve insertion order to help stable UI rendering.
         ordered: list[BrokerQuoteRequest] = []
         for req in requests:
-            token = str(req.broker_instrument_id or "").strip()
-            exch = str(req.exchange or "").strip().upper()
+            decoded = decode_angel_instrument_id(req.broker_instrument_id)
+            token = (
+                decoded.token
+                if decoded
+                else str(req.broker_instrument_id or "").strip()
+            )
+            exch = (
+                normalize_angel_exch_seg(req.exchange)
+                or str(req.exchange or "").strip().upper()
+            )
             if not token or not exch:
                 continue
             exchange_tokens.setdefault(exch, []).append(token)
@@ -700,7 +799,12 @@ class AngelAdapter(BrokerAdapter):
 
         out: list[ExternalBrokerQuote] = []
         for req in ordered:
-            token = str(req.broker_instrument_id or "").strip()
+            decoded = decode_angel_instrument_id(req.broker_instrument_id)
+            token = (
+                decoded.token
+                if decoded
+                else str(req.broker_instrument_id or "").strip()
+            )
             row = by_token.get(token)
             last_price = None
             prev_close = None

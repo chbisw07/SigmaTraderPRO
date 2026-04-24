@@ -590,9 +590,25 @@ class OrdersWorkspaceService:
 
             items = [i for i in items if _hit(i)]
 
+        if broker:
+            want = broker.strip().lower()
+            items = [i for i in items if i.broker.value == want]
+
+        if status_filter:
+            want = status_filter.strip().upper()
+            items = [i for i in items if (i.status and i.status.value == want)]
+
         if product_filter:
             want = product_filter.strip().upper()
             items = [i for i in items if (i.product and i.product.value == want)]
+
+        if instrument_type:
+            want = instrument_type.strip().upper()
+            items = [
+                i
+                for i in items
+                if (i.instrument and str(i.instrument.instrument_type).upper() == want)
+            ]
 
         # Sort: placed_at desc, fallback now.
         items.sort(key=lambda r: r.placed_at or _now_utc(), reverse=True)

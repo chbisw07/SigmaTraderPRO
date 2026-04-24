@@ -1,12 +1,13 @@
 import { type ComponentProps, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { SlidersHorizontal } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { formatNumber, formatQty, formatStrikeHuman } from '@/lib/format'
 import { useAuthStore } from '@/store/authStore'
@@ -17,8 +18,15 @@ import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 
 const EMPTY_ROWS: ordersApi.OrdersWorkspaceRow[] = []
 
+function normalizeIsoForDateParse(value: string): string {
+  // Some servers serialize microseconds (6 digits), which is not reliably parsed by `Date`.
+  // Trim to milliseconds when present.
+  return value.replace(/(\.\d{3})\d+(Z|[+-]\d{2}:\d{2})$/, '$1$2')
+}
+
 function StatusBadge({ status }: { status: string | null }) {
-  const s = (status ?? '—').toUpperCase()
+  if (!status) return null
+  const s = status.toUpperCase()
   const cls =
     s === 'EXECUTED'
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
@@ -49,6 +57,48 @@ function instrumentTitle(i: ordersApi.InstrumentOut | null): string {
   return i.display_symbol
 }
 
+function localYmd(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function parseLocalYmd(ymd: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd)
+  if (!m) return null
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const d = Number(m[3])
+  if (!y || !mo || !d) return null
+  return new Date(y, mo - 1, d)
+}
+
+function addDaysLocal(d: Date, days: number): Date {
+  const out = new Date(d)
+  out.setDate(out.getDate() + days)
+  return out
+}
+
+function formatPlacedAt(value: string | null): string {
+  if (!value) return '—'
+  const d = new Date(normalizeIsoForDateParse(value))
+  if (Number.isNaN(d.getTime())) return '—'
+  // Compact, single-line, locale-aware timestamp (no seconds).
+  return d
+    .toLocaleString('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      year: '2-digit',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+    .replace(',', '')
+}
+
 export function OrdersPage() {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
@@ -56,17 +106,46 @@ export function OrdersPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
+  const todayYmd = useMemo(() => localYmd(new Date()), [])
   const [q, setQ] = useState(() => searchParams.get('q') ?? '')
   const [broker, setBroker] = useState<ordersApi.BrokerKey | ''>('')
   const [status, setStatus] = useState<string>('')
   const [instrumentType, setInstrumentType] = useState<string>('')
   const [product, setProduct] = useState<string>('')
+  const [fromDate, setFromDate] = useState<string>(() => todayYmd)
+  const [toDate, setToDate] = useState<string>(() => todayYmd)
   const includeBrokerOrders = user?.include_broker_orders ?? true
   const [mode, setMode] = useState<ordersApi.OrdersSourceMode>(() => (includeBrokerOrders ? 'merged' : 'internal_only'))
 
   useEffect(() => {
     if (!includeBrokerOrders && mode !== 'internal_only') setMode('internal_only')
   }, [includeBrokerOrders, mode])
+
+  const activeFilterCount = useMemo(() => {
+    const defaultMode: ordersApi.OrdersSourceMode = includeBrokerOrders ? 'merged' : 'internal_only'
+    const hasDefaultDates = fromDate === todayYmd && toDate === todayYmd
+    return (
+      (q.trim() ? 1 : 0) +
+      (broker ? 1 : 0) +
+      (status ? 1 : 0) +
+      (product ? 1 : 0) +
+      (instrumentType ? 1 : 0) +
+      (!hasDefaultDates ? 1 : 0) +
+      (mode !== defaultMode ? 1 : 0) +
+      (!includeBrokerOrders ? 1 : 0)
+    )
+  }, [broker, fromDate, includeBrokerOrders, instrumentType, mode, product, q, status, toDate, todayYmd])
+
+  const clearAllFilters = () => {
+    setQ('')
+    setBroker('')
+    setStatus('')
+    setProduct('')
+    setInstrumentType('')
+    setFromDate(todayYmd)
+    setToDate(todayYmd)
+    setMode(includeBrokerOrders ? 'merged' : 'internal_only')
+  }
 
   const orders = useQuery<ordersApi.OrdersWorkspaceResponse>({
     queryKey: ['orders', 'workspace', { q, broker, status, instrumentType, product, mode, includeBrokerOrders }],
@@ -90,10 +169,61 @@ export function OrdersPage() {
 
   const rows = orders.data?.items ?? EMPTY_ROWS
   const brokerErrors = orders.data?.meta?.broker_errors ?? {}
+
+  const dateBounds = useMemo(() => {
+    let earliestMs: number | null = null
+    let latestMs: number | null = null
+    for (const r of rows) {
+      if (!r.placed_at) continue
+      const ms = new Date(normalizeIsoForDateParse(r.placed_at)).getTime()
+      if (Number.isNaN(ms)) continue
+      earliestMs = earliestMs == null ? ms : Math.min(earliestMs, ms)
+      latestMs = latestMs == null ? ms : Math.max(latestMs, ms)
+    }
+    return {
+      earliestYmd: earliestMs != null ? localYmd(new Date(earliestMs)) : null,
+      latestYmd: latestMs != null ? localYmd(new Date(latestMs)) : null,
+    }
+  }, [rows])
+
+  useEffect(() => {
+    const min = dateBounds.earliestYmd
+    if (!min) return
+    if (fromDate < min) setFromDate(min)
+    if (toDate < min) setToDate(min)
+  }, [dateBounds.earliestYmd, fromDate, toDate])
+
+  useEffect(() => {
+    // Prevent selecting dates beyond today.
+    if (fromDate > todayYmd) setFromDate(todayYmd)
+    if (toDate > todayYmd) setToDate(todayYmd)
+  }, [fromDate, toDate, todayYmd])
+
+  useEffect(() => {
+    // Keep a valid range.
+    if (fromDate > toDate) setToDate(fromDate)
+  }, [fromDate, toDate])
+
+  const filteredRows = useMemo(() => {
+    const start = parseLocalYmd(fromDate)
+    const end = parseLocalYmd(toDate)
+    if (!start || !end) return rows
+    const startMs = Math.min(start.getTime(), end.getTime())
+    const endMs = Math.max(start.getTime(), end.getTime())
+    const endExclusiveMs = addDaysLocal(new Date(endMs), 1).getTime()
+
+    return rows.filter((r) => {
+      if (!r.placed_at) return false
+      const ms = new Date(normalizeIsoForDateParse(r.placed_at)).getTime()
+      if (Number.isNaN(ms)) return false
+      return ms >= startMs && ms < endExclusiveMs
+    })
+  }, [rows, fromDate, toDate])
+
   const reconciliationNeeded = useMemo(() => {
     if (!includeBrokerOrders) return 0
-    return rows.filter((r) => r.reconciliation_state === 'unresolved').length
-  }, [includeBrokerOrders, rows])
+    return filteredRows.filter((r) => r.reconciliation_state === 'unresolved').length
+  }, [includeBrokerOrders, filteredRows])
 
   const [payloadOpen, setPayloadOpen] = useState(false)
   const [payloadOrderId, setPayloadOrderId] = useState<number | null>(null)
@@ -222,23 +352,178 @@ export function OrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Orders</h1>
-          <p className="text-sm text-muted-foreground">
-            Unified workspace over SigmaTraderPRO intent + broker orderbook (conservative matching).
-          </p>
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-3 shadow-sm">
+        <h1 className="sr-only">Orders</h1>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search symbol / canonical / broker id / correlation…"
+            className="h-9 w-[420px] max-w-full"
+          />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="h-9">
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+                {activeFilterCount ? (
+                  <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1 text-[11px] font-medium text-foreground">
+                    {activeFilterCount}
+                  </span>
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[560px] max-w-[92vw] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold">Filters</div>
+                <Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs text-muted-foreground" onClick={clearAllFilters}>
+                  Clear all
+                </Button>
+              </div>
+
+              <div className="mt-3 space-y-4">
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground">Source</div>
+                  <div className="flex items-center gap-1 rounded-md border bg-muted/40 p-1 shadow-sm">
+                    {(['merged', 'internal_only', 'broker_only'] as const).map((m) => (
+                      <Button
+                        key={m}
+                        type="button"
+                        size="sm"
+                        variant={mode === m ? 'default' : 'ghost'}
+                        onClick={() => setMode(m)}
+                        disabled={!includeBrokerOrders && m !== 'internal_only'}
+                        className="h-7 px-2"
+                      >
+                        {m === 'merged' ? 'Merged' : m === 'internal_only' ? 'Internal only' : 'Broker only'}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">From</div>
+                    <Input
+                      type="date"
+                      value={fromDate}
+                      min={dateBounds.earliestYmd || undefined}
+                      max={toDate || todayYmd}
+                      onChange={(e) => setFromDate(e.target.value)}
+                      className="h-9 w-full"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">To</div>
+                    <Input
+                      type="date"
+                      value={toDate}
+                      min={fromDate || dateBounds.earliestYmd || undefined}
+                      max={todayYmd}
+                      onChange={(e) => setToDate(e.target.value)}
+                      className="h-9 w-full"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">Broker</div>
+                    <select
+                      value={broker}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
+                        else setBroker('')
+                      }}
+                      className={cn(
+                        'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
+                    >
+                      <option value="">All</option>
+                      <option value="angel">Angel One</option>
+                      <option value="zerodha">Zerodha</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">Status</div>
+                    <select
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value)}
+                      className={cn(
+                        'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
+                    >
+                      <option value="">All</option>
+                      {['ACKNOWLEDGED', 'PENDING', 'OPEN', 'EXECUTED', 'PARTIAL', 'CANCELLED', 'BLOCKED', 'DISPATCH_FAILED', 'REJECTED', 'FAILED', 'SL_EXECUTED', 'TARGET_EXECUTED'].map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">Product</div>
+                    <select
+                      value={product}
+                      onChange={(e) => setProduct(e.target.value)}
+                      className={cn(
+                        'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
+                    >
+                      <option value="">All</option>
+                      {['CNC', 'MIS', 'NRML'].map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">Type</div>
+                    <select
+                      value={instrumentType}
+                      onChange={(e) => setInstrumentType(e.target.value)}
+                      className={cn(
+                        'h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      )}
+                    >
+                      <option value="">All</option>
+                      <option value="EQUITY">Stock/ETF</option>
+                      <option value="OPTION">Option</option>
+                      <option value="FUTURE">Future</option>
+                    </select>
+                  </div>
+                </div>
+
+                <label className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium">Include broker orders</div>
+                    <div className="text-[11px] text-muted-foreground">Show broker orderbook rows alongside internal orders.</div>
+                  </div>
+                  <input
+                    aria-label="Include broker orders"
+                    type="checkbox"
+                    checked={includeBrokerOrders}
+                    onChange={(e) => void updateIncludeBrokerOrders(e.target.checked)}
+                  />
+                </label>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          <div className="hidden xl:flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{fromDate}</span>
+            <span>→</span>
+            <span>{toDate}</span>
+          </div>
         </div>
+
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-2 rounded-md border bg-background px-2 py-1 text-sm">
-            <input
-              aria-label="Include broker orders"
-              type="checkbox"
-              checked={includeBrokerOrders}
-              onChange={(e) => void updateIncludeBrokerOrders(e.target.checked)}
-            />
-            <span className="text-xs">Include broker orders</span>
-          </label>
           <Button type="button" variant="outline" size="sm" onClick={() => void onReconcile()} disabled={!accessToken}>
             Reconcile
           </Button>
@@ -276,150 +561,75 @@ export function OrdersPage() {
         </div>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Filters</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          <div className="mr-2 flex items-center gap-1 rounded-md border bg-background p-1">
-            {(['merged', 'internal_only', 'broker_only'] as const).map((m) => (
-              <Button
-                key={m}
-                type="button"
-                size="sm"
-                variant={mode === m ? 'default' : 'ghost'}
-                onClick={() => setMode(m)}
-                disabled={!includeBrokerOrders && m !== 'internal_only'}
-              >
-                {m === 'merged' ? 'Merged' : m === 'internal_only' ? 'Internal only' : 'Broker only'}
-              </Button>
-            ))}
-          </div>
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search symbol / canonical / broker id / correlation…"
-            className="w-80"
-          />
-          <select
-            value={broker}
-            onChange={(e) => {
-              const v = e.target.value
-              if (v === '' || v === 'angel' || v === 'zerodha') setBroker(v)
-              else setBroker('')
-            }}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All brokers</option>
-            <option value="angel">Angel One</option>
-            <option value="zerodha">Zerodha</option>
-          </select>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All statuses</option>
-            {['ACKNOWLEDGED', 'PENDING', 'OPEN', 'EXECUTED', 'PARTIAL', 'CANCELLED', 'BLOCKED', 'DISPATCH_FAILED', 'REJECTED', 'FAILED', 'SL_EXECUTED', 'TARGET_EXECUTED'].map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <select
-            value={product}
-            onChange={(e) => setProduct(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All products</option>
-            {['CNC', 'MIS', 'NRML'].map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-          <select
-            value={instrumentType}
-            onChange={(e) => setInstrumentType(e.target.value)}
-            className={cn('h-10 rounded-md border bg-background px-2 text-sm outline-none', 'focus-visible:ring-2 focus-visible:ring-ring')}
-          >
-            <option value="">All types</option>
-            <option value="EQUITY">Stock/ETF</option>
-            <option value="OPTION">Option</option>
-            <option value="FUTURE">Future</option>
-          </select>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setQ('')
-              setBroker('')
-              setStatus('')
-              setProduct('')
-              setInstrumentType('')
-            }}
-          >
-            Clear
-          </Button>
-        </CardContent>
-      </Card>
-
       <div className="rounded-lg border bg-card">
         <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
           <div className="text-sm font-medium">Latest first</div>
-          <div className="text-xs text-muted-foreground">{rows.length} orders</div>
+          <div className="text-xs text-muted-foreground">
+            {filteredRows.length}
+            {filteredRows.length !== rows.length ? ` / ${rows.length}` : ''} orders
+          </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground">
+          <table className="w-full table-fixed text-[13px] tabular-nums">
+            <thead className="sticky top-0 z-10 bg-card/95 text-[11px] font-semibold text-muted-foreground backdrop-blur">
               <tr className="border-b">
-                <th className="px-3 py-2 text-left">Time</th>
-                <th className="px-3 py-2 text-left">Symbol</th>
-                <th className="px-3 py-2 text-left">Side</th>
-                <th className="px-3 py-2 text-left">Broker</th>
-                <th className="px-3 py-2 text-left">Origin</th>
-                <th className="px-3 py-2 text-left">Recon</th>
-                <th className="px-3 py-2 text-left">Product</th>
-                <th className="px-3 py-2 text-left">Qty/Lots</th>
-                <th className="px-3 py-2 text-left">Type</th>
-                <th className="px-3 py-2 text-left">Placed</th>
-                <th className="px-3 py-2 text-left">Avg</th>
-                <th className="px-3 py-2 text-left">Status</th>
-                <th className="px-3 py-2 text-left">Broker ID</th>
-                <th className="px-3 py-2 text-left">Correlation</th>
-                <th className="px-3 py-2 text-left">Source</th>
-                <th className="px-3 py-2 text-left">PnL</th>
-                <th className="px-3 py-2 text-right">Actions</th>
+                <th className="w-[150px] px-3 py-2.5 text-left">Time</th>
+                <th className="w-[280px] px-3 py-2.5 text-left">Symbol</th>
+                <th className="w-[72px] px-3 py-2.5 text-left">Side</th>
+                <th className="w-[84px] px-3 py-2.5 text-left">Broker</th>
+                <th className="w-[76px] px-3 py-2.5 text-left">Product</th>
+                <th className="w-[96px] px-3 py-2.5 text-right">Qty/Lots</th>
+                <th className="w-[84px] px-3 py-2.5 text-left">Type</th>
+                <th className="w-[86px] px-3 py-2.5 text-right">Placed</th>
+                <th className="w-[74px] px-3 py-2.5 text-right">Avg</th>
+                <th className="w-[160px] px-3 py-2.5 text-left">Status</th>
+                <th className="w-[92px] px-3 py-2.5 text-left">Origin</th>
+                <th className="w-[92px] px-3 py-2.5 text-left">Recon</th>
+                <th className="w-[130px] px-3 py-2.5 text-left">Source</th>
+                <th className="w-[70px] px-3 py-2.5 text-right">PnL</th>
+                <th className="w-[340px] px-3 py-2.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {rows.map((o) => {
+              {filteredRows.map((o) => {
                 const internalId = o.internal_order_id
                 const busy = internalId != null ? actionBusy.has(internalId) : false
                 const title = o.instrument ? instrumentTitle(o.instrument) : (o.symbol_display ?? '—')
                 const kind = o.instrument?.instrument_type ?? (o.canonical_id ? '—' : '—')
                 const sideCls = o.side === 'BUY' ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'
+                const symbolTooltip = [
+                  title !== '—' ? title : null,
+                  o.canonical_id ? `Canonical: ${o.canonical_id}` : null,
+                  o.broker_order_id ? `Broker ID: ${o.broker_order_id}` : null,
+                  o.correlation_id ? `Correlation: ${o.correlation_id}` : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n')
+                const sourceLabel = o.source ?? ''
+                const sourceFull = o.intent_type ? `${sourceLabel} · ${o.intent_type}` : sourceLabel
                 return (
-                  <tr key={o.row_id} className="hover:bg-accent/20">
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{o.placed_at ? new Date(o.placed_at).toLocaleString() : '—'}</td>
+                  <tr key={o.row_id} className="transition-colors hover:bg-accent/30">
+                    <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{formatPlacedAt(o.placed_at)}</td>
                     <td className="px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <div className="font-medium">{title}</div>
-                        {kind !== '—' ? <Badge variant="outline">{kind}</Badge> : null}
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="min-w-0 truncate font-medium leading-tight" title={symbolTooltip || undefined}>
+                          {title}
+                        </div>
+                        {kind !== '—' ? (
+                          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] text-muted-foreground">
+                            {kind}
+                          </Badge>
+                        ) : null}
                       </div>
-                      <div className="mt-0.5 break-all text-[11px] text-muted-foreground">{o.canonical_id ?? '—'}</div>
                     </td>
-                    <td className={cn('px-3 py-2 font-medium', sideCls)}>{o.side ?? '—'}</td>
-                    <td className="px-3 py-2">{o.broker}</td>
-                    <td className="px-3 py-2"><Badge variant="outline">{o.source_origin}</Badge></td>
-                    <td className="px-3 py-2"><Badge variant="outline">{o.reconciliation_state}</Badge></td>
-                    <td className="px-3 py-2">{o.product ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{o.lots != null ? `${formatQty(o.lots)} lots` : formatQty(o.quantity)}</td>
-                    <td className="px-3 py-2">{o.order_type ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatNumber(o.placed_price)}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatNumber(o.avg_price)}</td>
+                    <td className={cn('px-3 py-2 font-medium whitespace-nowrap', sideCls)}>{o.side ?? '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{o.broker}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{o.product ?? '—'}</td>
+                    <td className="px-3 py-2 tabular-nums text-right whitespace-nowrap">{o.lots != null ? `${formatQty(o.lots)} lots` : formatQty(o.quantity)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{o.order_type ?? '—'}</td>
+                    <td className="px-3 py-2 tabular-nums text-right whitespace-nowrap">{formatNumber(o.placed_price)}</td>
+                    <td className="px-3 py-2 tabular-nums text-right whitespace-nowrap">{formatNumber(o.avg_price)}</td>
                     <td className="px-3 py-2">
                       <StatusBadge status={o.status} />
                       {o.blocked_reason_message ? (
@@ -432,23 +642,46 @@ export function OrdersPage() {
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{o.broker_order_id ?? '—'}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {o.correlation_id ? <span className="font-mono">{o.correlation_id}</span> : '—'}
+                    <td className="px-3 py-2">
+                      <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+                        {o.source_origin}
+                      </Badge>
                     </td>
                     <td className="px-3 py-2">
-                      <div className="text-xs">{o.source ?? '—'}</div>
-                      <div className="text-[11px] text-muted-foreground">{o.intent_type ?? '—'}</div>
+                      <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+                        {o.reconciliation_state}
+                      </Badge>
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">—</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {sourceFull ? (
+                        <div className="truncate" title={sourceFull}>
+                          {sourceFull}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2 text-right text-xs text-muted-foreground" />
                     <td className="px-3 py-2 text-right">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-1.5">
                         {internalId != null ? (
                           <>
-                            <Button type="button" size="sm" variant="outline" onClick={() => void onRepeat(internalId)} disabled={busy}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void onRepeat(internalId)}
+                              disabled={busy}
+                            >
                               {busy ? '…' : 'Repeat'}
                             </Button>
-                            <Button type="button" size="sm" variant="outline" onClick={() => void onReverse(internalId)} disabled={busy}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void onReverse(internalId)}
+                              disabled={busy}
+                            >
                               Reverse
                             </Button>
                             {o.linked_position_id ? (
@@ -456,6 +689,7 @@ export function OrdersPage() {
                                 type="button"
                                 size="sm"
                                 variant="outline"
+                                className="h-7 px-2 text-[11px]"
                                 onClick={() => void onExitLinkedPosition(o.linked_position_id!, internalId)}
                                 disabled={busy}
                               >
@@ -463,7 +697,7 @@ export function OrdersPage() {
                               </Button>
                             ) : null}
                             {o.linked_position_id ? (
-                              <Button type="button" size="sm" variant="outline" onClick={() => navigate('/positions')}>
+                              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => navigate('/positions')}>
                                 Position
                               </Button>
                             ) : null}
@@ -471,6 +705,7 @@ export function OrdersPage() {
                               type="button"
                               size="sm"
                               variant="outline"
+                              className="h-7 px-2 text-[11px]"
                               onClick={() => {
                                 setPayloadOrderId(internalId)
                                 setPayloadOpen(true)
@@ -489,20 +724,20 @@ export function OrdersPage() {
               })}
               {orders.isError ? (
                 <tr>
-                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={17}>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={15}>
                     Unable to load orders. Check API connectivity and try refresh.
                   </td>
                 </tr>
               ) : orders.isFetching && !rows.length ? (
                 <tr>
-                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={17}>
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={15}>
                     Loading orders…
                   </td>
                 </tr>
-              ) : !rows.length && !orders.isFetching ? (
+              ) : !filteredRows.length && !orders.isFetching ? (
                 <tr>
-                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={17}>
-                    No orders yet. Place one from Search.
+                  <td className="px-3 py-6 text-center text-sm text-muted-foreground" colSpan={15}>
+                    No orders in selected date range.
                   </td>
                 </tr>
               ) : null}

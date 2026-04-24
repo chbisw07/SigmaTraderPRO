@@ -121,6 +121,7 @@ class PositionService:
         db: Session,
         *,
         broker: BrokerKey,
+        exchange: str | None,
         broker_instrument_id: str | None,
         trading_symbol: str | None,
     ) -> Instrument | None:
@@ -137,9 +138,30 @@ class PositionService:
             if inst:
                 return inst
         if trading_symbol:
-            return qry.filter(
-                InstrumentMapping.broker_trading_symbol == trading_symbol
+            raw = str(trading_symbol).strip()
+            if not raw:
+                return None
+            sym = raw.upper()
+            inst = qry.filter(
+                InstrumentMapping.broker_trading_symbol == sym
             ).one_or_none()
+            if inst:
+                return inst
+            # SmartAPI cash positions sometimes report "TCS" while the master
+            # uses "TCS-EQ". Try the common suffix for NSE/BSE cash.
+            exch = str(exchange or "").strip().upper()
+            is_angel_cash = broker == BrokerKey.angel and exch in {
+                "NSE",
+                "BSE",
+                "NSECM",
+                "BSECM",
+            }
+            if is_angel_cash and "-EQ" not in sym:
+                inst = qry.filter(
+                    InstrumentMapping.broker_trading_symbol == f"{sym}-EQ"
+                ).one_or_none()
+                if inst:
+                    return inst
         return None
 
     def sync_from_broker_positionbook(
@@ -163,9 +185,9 @@ class PositionService:
         try:
             external_positions = adapter.fetch_positions(db, user)
         except (BrokerNotConfiguredError, BrokerError) as exc:
-            return 0, 0, str(exc)
+            return 0, 0, 0, set(), str(exc)
         except Exception:  # noqa: BLE001
-            return 0, 0, f"{broker.value} positionbook fetch failed"
+            return 0, 0, 0, set(), f"{broker.value} positionbook fetch failed"
 
         upserted = 0
         closed = 0
@@ -228,6 +250,7 @@ class PositionService:
             inst = self._resolve_instrument(
                 db,
                 broker=broker,
+                exchange=row.exchange,
                 broker_instrument_id=row.broker_instrument_id,
                 trading_symbol=row.trading_symbol,
             )
