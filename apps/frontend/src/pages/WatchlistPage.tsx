@@ -691,11 +691,6 @@ export function WatchlistPage() {
     return buckets
   }, [entryGroupMap, filteredItems, groups])
 
-  const activeGroupName = useMemo(() => {
-    const g = groups.find((x) => x.id === activeGroupId) ?? groups.find((x) => x.id === 'default') ?? null
-    return g?.name ?? 'Default'
-  }, [activeGroupId, groups])
-
   return (
     <div className={cn('space-y-6', isCompact && 'space-y-3')}>
       {banner ? (
@@ -713,18 +708,9 @@ export function WatchlistPage() {
 	        <CardHeader className={cn('space-y-4', isCompact && 'space-y-3')}>
 	          <div className="flex flex-wrap items-start justify-between gap-3">
 	            <div className="flex-1 min-w-[140px] space-y-1">
-	              <CardTitle className={cn('text-base', isCompact && 'text-sm')}>Watchlist</CardTitle>
-	              <div className={cn('truncate font-medium', isCompact ? 'text-sm' : 'text-base')}>
+	              <CardTitle className={cn('text-base', isCompact && 'text-sm')}>
 	                {activeWatchlist?.name ?? `Watchlist ${activeSlot}`}
-	              </div>
-	              <div className={cn('truncate text-[11px] text-muted-foreground', isCompact && 'text-[10px]')}>
-	                Slot {activeSlot} • Group: {activeGroupName}
-	              </div>
-	              {!isCompact ? (
-	                <div className="text-xs text-muted-foreground truncate whitespace-nowrap">
-	                  Fast Buy/Sell actions. Quotes will layer in later.
-	                </div>
-	              ) : null}
+	              </CardTitle>
 	            </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
