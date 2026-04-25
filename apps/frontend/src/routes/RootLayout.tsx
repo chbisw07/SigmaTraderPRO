@@ -72,14 +72,14 @@ export function RootLayout() {
           )}
           style={{ width: widthPx, minWidth: minPx, maxWidth: maxPx }}
         >
-          <div className="h-full min-h-0 overflow-auto px-3 pb-3 pt-5">
+          <div className="h-full min-h-0 overflow-auto px-3 pb-3 pt-4">
             <WatchlistPage />
           </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
           <main className="flex-1 min-h-0 overflow-hidden p-3">
-            <div className="h-full min-h-0 overflow-auto rounded-xl bg-card px-3 pb-3 pt-2">
+            <div className="h-full min-h-0 overflow-auto rounded-xl bg-card px-3 pb-3 pt-1">
               <Outlet />
             </div>
           </main>
