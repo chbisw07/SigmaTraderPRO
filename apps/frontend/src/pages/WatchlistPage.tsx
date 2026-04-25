@@ -38,6 +38,7 @@ import { useWatchlistLayoutStore } from '@/store/watchlistLayoutStore'
 import { WATCHLIST_ENTRY_LIMIT, WATCHLIST_SLOT_COUNT, useWatchlistStructureStore } from '@/store/watchlistStructureStore'
 
 const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
+const SLOTS_INITIALIZED_KEY = 'sigmatraderpro.watchlist.slots_initialized'
 
 const BROKER_OPTIONS = [
   { key: 'angel', label: 'Angel One' },
@@ -158,6 +159,24 @@ function setStoredActiveId(id: number) {
   }
 }
 
+function safeStoredSlotsInitialized(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(SLOTS_INITIALIZED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function setStoredSlotsInitialized() {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(SLOTS_INITIALIZED_KEY, '1')
+  } catch {
+    // ignore
+  }
+}
+
 function useDebounced(value: string, delayMs = 250) {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
@@ -203,6 +222,7 @@ export function WatchlistPage() {
   const activeSlot = useWatchlistStructureStore((s) => s.activeSlot)
   const setActiveSlot = useWatchlistStructureStore((s) => s.setActiveSlot)
   const slotToWatchlistId = useWatchlistStructureStore((s) => s.slotToWatchlistId)
+  const setSlotToWatchlistId = useWatchlistStructureStore((s) => s.setSlotToWatchlistId)
   const setSlotMap = useWatchlistStructureStore((s) => s.setSlotMap)
 
   const ensureDefaultGroup = useWatchlistStructureStore((s) => s.ensureDefaultGroup)
@@ -237,15 +257,24 @@ export function WatchlistPage() {
     const server = watchlists.data?.items
     if (!server) return
 
+    const slotsInitialized = safeStoredSlotsInitialized()
     const existingIds = new Set<number>(server.map((w) => w.id))
     const current = useWatchlistStructureStore.getState().slotToWatchlistId
     let needs = false
     for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
       const id = current[slot]
-      if (id == null || !existingIds.has(id)) {
+      if (id != null && !existingIds.has(id)) {
         needs = true
         break
       }
+    }
+    if (!needs && !slotsInitialized) {
+      const used = new Set<number>()
+      for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
+        const id = current[slot]
+        if (id != null && existingIds.has(id)) used.add(id)
+      }
+      if (used.size < WATCHLIST_SLOT_COUNT) needs = true
     }
     if (!needs) return
     if (ensuringSlotsRef.current) return
@@ -304,13 +333,16 @@ export function WatchlistPage() {
           return wl
         }
 
-        for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
-          if (next[slot] != null) continue
-          const created = await createForSlot(slot)
-          next[slot] = created.id
+        if (!slotsInitialized) {
+          for (let slot = 1; slot <= WATCHLIST_SLOT_COUNT; slot += 1) {
+            if (next[slot] != null) continue
+            const created = await createForSlot(slot)
+            next[slot] = created.id
+          }
         }
 
         setSlotMap(next)
+        setStoredSlotsInitialized()
 
         const stored = safeStoredActiveId()
         let nextActiveSlot = activeSlot
@@ -376,6 +408,74 @@ export function WatchlistPage() {
       if (wl.is_default) setBanner('Default watchlist updated')
     },
     onError: () => setBanner('Update failed'),
+  })
+
+  const createSlotWatchlist = useMutation({
+    mutationFn: async ({ slot }: { slot: number }) => {
+      if (!accessToken) throw new Error('no auth')
+      const existing = watchlists.data?.items ?? []
+      const nameSet = new Set(existing.map((w) => w.name.trim().toLowerCase()))
+      const base = `Watchlist ${slot}`
+      const candidates = [
+        base,
+        `WL ${slot}`,
+        `Watchlist ${slot} (${Math.floor(Date.now() / 1000)})`,
+        `WL ${slot} ${Math.random().toString(16).slice(2, 6)}`,
+      ]
+      for (const name of candidates) {
+        const key = name.trim().toLowerCase()
+        if (nameSet.has(key)) continue
+        try {
+          return await watchlistsApi.createWatchlist(accessToken, { name })
+        } catch {
+          // try next candidate
+        }
+      }
+      // last-resort unique name
+      const name = `WL ${slot} ${Math.random().toString(36).slice(2, 6)}`
+      return watchlistsApi.createWatchlist(accessToken, { name })
+    },
+    onSuccess: async (wl, vars) => {
+      setStoredSlotsInitialized()
+      setSlotToWatchlistId(vars.slot, wl.id)
+      setActiveSlot(vars.slot)
+      setStoredActiveId(wl.id)
+      await watchlists.refetch()
+      setBanner('Watchlist created')
+    },
+    onError: () => setBanner('Create watchlist failed'),
+  })
+
+  const deleteSlotWatchlist = useMutation({
+    mutationFn: async ({ slot, watchlistId }: { slot: number; watchlistId: number }) => {
+      if (!accessToken) throw new Error('no auth')
+      await watchlistsApi.deleteWatchlist(accessToken, watchlistId)
+      return { slot, watchlistId }
+    },
+    onSuccess: async ({ slot, watchlistId }) => {
+      setStoredSlotsInitialized()
+      setSlotToWatchlistId(slot, null)
+
+      if (slot === activeSlot) {
+        const nextMap = { ...useWatchlistStructureStore.getState().slotToWatchlistId, [slot]: null }
+        let picked: { slot: number; id: number } | null = null
+        for (let s = 1; s <= WATCHLIST_SLOT_COUNT; s += 1) {
+          const id = nextMap[s]
+          if (id != null && id !== watchlistId) {
+            picked = { slot: s, id }
+            break
+          }
+        }
+        if (picked) {
+          setActiveSlot(picked.slot)
+          setStoredActiveId(picked.id)
+        }
+      }
+
+      await watchlists.refetch()
+      setBanner('Watchlist deleted')
+    },
+    onError: () => setBanner('Delete watchlist failed'),
   })
 
   const addItem = useMutation({
@@ -2069,7 +2169,26 @@ export function WatchlistPage() {
               </div>
             </div>
             <div className="space-y-3">
-              <div className="text-sm font-medium">Watchlists</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-medium">Watchlists</div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const empty = slotTabs.find((t) => !t.watchlistId)?.slot ?? null
+                    if (!empty) {
+                      setBanner(`All ${WATCHLIST_SLOT_COUNT} slots are in use. Delete one to create a new watchlist.`)
+                      return
+                    }
+                    void createSlotWatchlist.mutate({ slot: empty })
+                  }}
+                  disabled={!accessToken || createSlotWatchlist.isPending}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create watchlist
+                </Button>
+              </div>
               <div className="space-y-2">
                 {slotTabs.map((t) => {
                   const wlId = t.watchlistId
@@ -2153,22 +2272,67 @@ export function WatchlistPage() {
                             </Button>
                           </>
                         ) : (
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="outline"
-                            aria-label="Rename watchlist"
-                            disabled={wlId == null}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              if (!wlId) return
-                              setEditingId(wlId)
-                              setEditingName(t.name)
-                            }}
-                          >
-                            <Pencil />
-                          </Button>
+                          <>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="outline"
+                              aria-label="Rename watchlist"
+                              disabled={wlId == null}
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                if (!wlId) return
+                                setEditingId(wlId)
+                                setEditingName(t.name)
+                              }}
+                            >
+                              <Pencil />
+                            </Button>
+                            {wlId != null ? (
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="outline"
+                                aria-label="Delete watchlist"
+                                title="Delete watchlist"
+                                disabled={!accessToken || deleteSlotWatchlist.isPending}
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  const mappedCount = slotTabs.filter((x) => x.watchlistId != null).length
+                                  if (mappedCount <= 1) {
+                                    setBanner('Keep at least one watchlist')
+                                    return
+                                  }
+                                  const ok =
+                                    typeof window !== 'undefined' && typeof window.confirm === 'function'
+                                      ? window.confirm(`Delete “${t.name}”? This will remove all its entries.`)
+                                      : true
+                                  if (!ok) return
+                                  void deleteSlotWatchlist.mutate({ slot: t.slot, watchlistId: wlId })
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="outline"
+                                aria-label="Create watchlist in slot"
+                                title="Create watchlist"
+                                disabled={!accessToken || createSlotWatchlist.isPending}
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  void createSlotWatchlist.mutate({ slot: t.slot })
+                                }}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
