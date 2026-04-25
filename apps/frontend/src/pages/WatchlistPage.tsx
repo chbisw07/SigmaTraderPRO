@@ -418,6 +418,18 @@ export function WatchlistPage() {
     onError: () => setBanner('Remove failed'),
   })
 
+  const syncFnoUnderlyings = useMutation({
+    mutationFn: async ({ underlyings }: { underlyings: string[] }) => {
+      if (!accessToken) throw new Error('no auth')
+      return instrumentsApi.syncAngelMaster(accessToken, { scope: 'fno_underlyings', underlyings })
+    },
+    onSuccess: async (_res, vars) => {
+      await addFnoContracts.refetch()
+      setBanner(`Synced F&O: ${vars.underlyings.join(', ')}`)
+    },
+    onError: () => setBanner('F&O sync failed'),
+  })
+
   const brokerStatus = useQuery({
     queryKey: ['brokers', 'status'],
     queryFn: async () => {
@@ -563,6 +575,25 @@ export function WatchlistPage() {
       .sort((a, b) => a.underlying.localeCompare(b.underlying))
       .slice(0, 15)
   }, [addFnoContracts.data])
+
+  const fnoSyncSuggestions = useMemo(() => {
+    const needle = q.trim().toUpperCase()
+    if (!needle) return []
+    const candidates: string[] = []
+    for (const i of cashSections.equities) candidates.push((i.symbol_root ?? i.display_symbol).trim().toUpperCase())
+    for (const i of cashSections.indices) candidates.push((i.symbol_root ?? i.display_symbol).trim().toUpperCase())
+    candidates.push(needle)
+    const unique = Array.from(new Set(candidates)).filter(Boolean)
+    const scored = unique
+      .map((u) => {
+        const score =
+          u === needle ? 0 : u.startsWith(needle) ? 1 : u.includes(needle) ? 2 : 3
+        return { u, score }
+      })
+      .sort((a, b) => (a.score !== b.score ? a.score - b.score : a.u.length - b.u.length))
+      .map((x) => x.u)
+    return scored.slice(0, 3)
+  }, [cashSections.equities, cashSections.indices, q])
 
   const previewExpiries = useQuery({
     queryKey: ['watchlist', 'add', 'derivatives', 'expiries', previewUnderlying],
@@ -1620,14 +1651,33 @@ export function WatchlistPage() {
                         )
                       })}
 
-                      {!addFnoContracts.isFetching && fnoUnderlyings.length === 0 ? (
-                        <div className="px-3 py-4 text-sm text-muted-foreground">
-                          No underlyings found. Sync F&amp;O (underlyings) first.
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
+	                      {!addFnoContracts.isFetching && fnoUnderlyings.length === 0 ? (
+	                        <div className="px-3 py-4 text-sm text-muted-foreground space-y-2">
+	                          <div>No underlyings found. Sync F&amp;O (underlyings) first.</div>
+	                          {fnoSyncSuggestions.length ? (
+	                            <div className="flex flex-wrap items-center gap-2">
+	                              {fnoSyncSuggestions.map((u) => (
+	                                <Button
+	                                  key={u}
+	                                  type="button"
+	                                  size="sm"
+	                                  variant="outline"
+	                                  disabled={!accessToken || syncFnoUnderlyings.isPending}
+	                                  onClick={() => void syncFnoUnderlyings.mutate({ underlyings: [u] })}
+	                                >
+	                                  Sync {u}
+	                                </Button>
+	                              ))}
+	                            </div>
+	                          ) : null}
+	                          <div className="text-xs text-muted-foreground/80">
+	                            Tip: add the symbol in the “NIFTY,BANKNIFTY…” box (Instrument registry sync) and click “Sync F&amp;O (underlyings)”.
+	                          </div>
+	                        </div>
+	                      ) : null}
+	                    </div>
+	                  </div>
+	                ) : null}
 
                 {!addCashSearch.isFetching &&
                 !addFnoContracts.isFetching &&

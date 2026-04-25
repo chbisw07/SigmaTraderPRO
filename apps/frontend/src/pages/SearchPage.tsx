@@ -130,6 +130,43 @@ const EMPTY_INSTRUMENTS: instrumentsApi.InstrumentOut[] = []
 
 const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
 
+const COMMON_FNO_UNDERLYINGS = [
+  'NIFTY',
+  'BANKNIFTY',
+  'FINNIFTY',
+  'MIDCPNIFTY',
+  'HDFCBANK',
+  'RELIANCE',
+  'INFY',
+  'TCS',
+  'ICICIBANK',
+  'SBIN',
+  'AXISBANK',
+  'KOTAKBANK',
+  'LT',
+  'ITC',
+  'BHARTIARTL',
+  'HINDUNILVR',
+  'ADANIENT',
+  'TATAMOTORS',
+  'BAJFINANCE',
+  'BAJAJFINSV',
+  'ASIANPAINT',
+  'HCLTECH',
+  'ONGC',
+  'POWERGRID',
+  'NTPC',
+  'SUNPHARMA',
+  'DRREDDY',
+  'INDUSINDBK',
+  'ULTRACEMCO',
+  'TITAN',
+  'MARUTI',
+  'JSWSTEEL',
+  'TATASTEEL',
+  'COALINDIA',
+].join(',')
+
 function safeStoredActiveWatchlistId(): number | null {
   if (typeof window === 'undefined') return null
   try {
@@ -640,16 +677,25 @@ export function SearchPage() {
               Sync equities (NSE/BSE)
             </Button>
             <div className="flex flex-wrap items-center gap-2">
-              <Input
-                value={syncUnderlyings}
-                onChange={(e) => setSyncUnderlyings(e.target.value)}
-                placeholder="NIFTY,BANKNIFTY"
-                className="w-64"
-                aria-label="F&O underlyings to sync"
-              />
-              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncFno()} disabled={syncBusy}>
-                Sync F&amp;O (underlyings)
-              </Button>
+	              <Input
+	                value={syncUnderlyings}
+	                onChange={(e) => setSyncUnderlyings(e.target.value)}
+	                placeholder="NIFTY,BANKNIFTY"
+	                className="w-64"
+	                aria-label="F&O underlyings to sync"
+	              />
+	              <Button
+	                type="button"
+	                size="sm"
+	                variant="outline"
+	                onClick={() => setSyncUnderlyings(COMMON_FNO_UNDERLYINGS)}
+	                disabled={syncBusy}
+	              >
+	                Common list
+	              </Button>
+	              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncFno()} disabled={syncBusy}>
+	                Sync F&amp;O (underlyings)
+	              </Button>
               <Button type="button" size="sm" variant="outline" onClick={() => void onSyncZerodhaNfo()} disabled={syncBusy}>
                 Sync Zerodha NFO mappings
               </Button>
