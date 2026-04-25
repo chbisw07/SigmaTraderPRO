@@ -155,5 +155,12 @@ export async function apiRequest<T>(
     throw { status: response.status, message } satisfies ApiError
   }
 
-  return (await response.json()) as T
+  if (response.status === 204) return undefined as T
+
+  const raw = await response.text()
+  if (!raw) return undefined as T
+
+  const contentType = response.headers.get('content-type') ?? ''
+  if (contentType.includes('application/json')) return JSON.parse(raw) as T
+  return raw as unknown as T
 }

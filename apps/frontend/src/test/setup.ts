@@ -533,14 +533,16 @@ beforeAll(() => {
       return jsonResponse({ broker, items, warning: null })
     }
 
-    if (path === '/api/v1/instruments/search') {
-      const q = (url.searchParams.get('q') ?? '').toLowerCase()
-      if (!q) return jsonResponse({ items: [] })
+	    if (path === '/api/v1/instruments/search') {
+	      const q = (url.searchParams.get('q') ?? '').toLowerCase()
+	      const instrumentType = (url.searchParams.get('instrument_type') ?? '').toUpperCase()
+	      if (!q) return jsonResponse({ items: [] })
 
-      if (q.includes('infy')) {
-        return jsonResponse({
-          items: [
-            {
+	      if (q.includes('infy')) {
+	        if (instrumentType && instrumentType !== 'EQUITY') return jsonResponse({ items: [] })
+	        return jsonResponse({
+	          items: [
+	            {
               canonical_id: 'NSE_EQ:EQUITY:EQUITY:INFY',
               exchange: 'NSE_EQ',
               segment: 'EQUITY',
@@ -562,10 +564,11 @@ beforeAll(() => {
         })
       }
 
-      if (q.includes('tcs')) {
-        return jsonResponse({
-          items: [
-            {
+	      if (q.includes('tcs')) {
+	        if (instrumentType && instrumentType !== 'EQUITY') return jsonResponse({ items: [] })
+	        return jsonResponse({
+	          items: [
+	            {
               canonical_id: 'NSE_EQ:EQUITY:EQUITY:TCS',
               exchange: 'NSE_EQ',
               segment: 'EQUITY',
@@ -587,10 +590,11 @@ beforeAll(() => {
         })
       }
 
-      if (q.includes('fut')) {
-        return jsonResponse({
-          items: [
-            {
+	      if (q.includes('fut')) {
+	        if (instrumentType && instrumentType !== 'FUTURE') return jsonResponse({ items: [] })
+	        return jsonResponse({
+	          items: [
+	            {
               canonical_id: 'NSE_FNO:FUTURE:FUTURE:NIFTY:2026-04-25',
               exchange: 'NSE_FNO',
               segment: 'FUTURE',
@@ -612,10 +616,76 @@ beforeAll(() => {
         })
       }
 
-      if (q.includes('nifty')) {
-        return jsonResponse({
-          items: [
-            {
+	      if (q.includes('nifty')) {
+	        if (instrumentType === 'FUTURE') {
+	          return jsonResponse({
+	            items: [
+	              {
+	                canonical_id: 'NSE_FNO:FUTURE:FUTURE:NIFTY:2026-04-25',
+	                exchange: 'NSE_FNO',
+	                segment: 'FUTURE',
+	                instrument_type: 'FUTURE',
+	                symbol_root: 'NIFTY',
+	                display_symbol: 'NIFTY 25 Apr 2026 FUT',
+	                underlying: 'NIFTY',
+	                expiry: '2026-04-25',
+	                strike: null,
+	                option_type: null,
+	                lot_size: 50,
+	                tick_size: 0.05,
+	                isin: null,
+	                is_active: true,
+	                created_at: '2026-04-09T00:00:00Z',
+	                updated_at: '2026-04-09T00:00:00Z',
+	              },
+	              {
+	                canonical_id: 'NSE_FNO:FUTURE:FUTURE:NIFTY:2026-05-30',
+	                exchange: 'NSE_FNO',
+	                segment: 'FUTURE',
+	                instrument_type: 'FUTURE',
+	                symbol_root: 'NIFTY',
+	                display_symbol: 'NIFTY 30 May 2026 FUT',
+	                underlying: 'NIFTY',
+	                expiry: '2026-05-30',
+	                strike: null,
+	                option_type: null,
+	                lot_size: 50,
+	                tick_size: 0.05,
+	                isin: null,
+	                is_active: true,
+	                created_at: '2026-04-09T00:00:00Z',
+	                updated_at: '2026-04-09T00:00:00Z',
+	              },
+	            ],
+	          })
+	        }
+	        if (instrumentType === 'OPTION') {
+	          return jsonResponse({
+	            items: [
+	              {
+	                canonical_id: 'NSE_FNO:OPTION:OPTION:NIFTY:2026-04-25:23100:CE',
+	                exchange: 'NSE_FNO',
+	                segment: 'OPTION',
+	                instrument_type: 'OPTION',
+	                symbol_root: 'NIFTY',
+	                display_symbol: 'NIFTY 25 Apr 2026 23100 CE',
+	                underlying: 'NIFTY',
+	                expiry: '2026-04-25',
+	                strike: 23100,
+	                option_type: 'CE',
+	                lot_size: 50,
+	                tick_size: 0.05,
+	                isin: null,
+	                is_active: true,
+	                created_at: '2026-04-09T00:00:00Z',
+	                updated_at: '2026-04-09T00:00:00Z',
+	              },
+	            ],
+	          })
+	        }
+	        return jsonResponse({
+	          items: [
+	            {
               canonical_id: 'NSE_FNO:INDEX:INDEX:NIFTY',
               exchange: 'NSE_FNO',
               segment: 'INDEX',

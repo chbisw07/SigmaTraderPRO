@@ -439,8 +439,10 @@ test('search page renders and returns canonical results', async () => {
     target: { value: 'INFY' },
   })
 
-  expect(await screen.findByText('INFY')).toBeInTheDocument()
-  expect(screen.getByText('NSE_EQ:EQUITY:EQUITY:INFY')).toBeInTheDocument()
+  const infyId = await screen.findByText('NSE_EQ:EQUITY:EQUITY:INFY')
+  const infyRow = infyId.closest('div')?.parentElement?.parentElement
+  if (!infyRow) throw new Error('INFY row not found')
+  expect(within(infyRow).getByText('INFY')).toBeInTheDocument()
 })
 
 test('stock order dialog opens from search and previews order', async () => {
@@ -468,7 +470,10 @@ test('stock order dialog opens from search and previews order', async () => {
     target: { value: 'INFY' },
   })
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Trade' }))
+  const infyId = await screen.findByText('NSE_EQ:EQUITY:EQUITY:INFY')
+  const infyRow = infyId.closest('div')?.parentElement?.parentElement
+  if (!infyRow) throw new Error('INFY row not found')
+  fireEvent.click(within(infyRow).getByRole('button', { name: 'Trade' }))
 
   expect(await screen.findByText('Stock order')).toBeInTheDocument()
   const stockDialog = screen.getByRole('dialog')
@@ -635,14 +640,19 @@ test('future Trade click opens F&O dialog with contract prefill', async () => {
   renderAt('/search')
   expect(await screen.findByRole('heading', { name: 'Search' })).toBeInTheDocument()
 
+  fireEvent.click(screen.getByRole('button', { name: 'F&O' }))
   fireEvent.change(screen.getByLabelText('Instrument search query'), {
-    target: { value: 'NIFTY FUT' },
+    target: { value: 'NIFTY' },
   })
+  const niftyBtn = await screen.findByRole('button', { name: 'NIFTY' })
+  const niftyRow = niftyBtn.closest('div')
+  if (!niftyRow) throw new Error('NIFTY underlying row not found')
+  fireEvent.click(within(niftyRow).getByRole('button', { name: 'Show' }))
 
-  const futId = await screen.findByText('NSE_FNO:FUTURE:FUTURE:NIFTY:2026-04-25')
-  const futRow = futId.parentElement?.parentElement
-  if (!futRow) throw new Error('Future row not found')
-  fireEvent.click(within(futRow).getByRole('button', { name: 'Trade' }))
+  const futTitle = await screen.findByText('NIFTY 25 Apr 2026 FUT')
+  const futCard = futTitle.closest('div')?.parentElement?.parentElement
+  if (!futCard) throw new Error('Future card not found')
+  fireEvent.click(within(futCard).getByRole('button', { name: 'Trade' }))
 
   expect(await screen.findByText('F&O order')).toBeInTheDocument()
   const dialog = screen.getByRole('dialog')

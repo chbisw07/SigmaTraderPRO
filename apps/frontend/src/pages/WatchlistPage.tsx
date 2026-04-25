@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -28,9 +29,11 @@ import * as quotesApi from '@/lib/api/quotes'
 import * as watchlistsApi from '@/lib/api/watchlists'
 import { cn } from '@/lib/utils'
 import { formatStrikeHuman } from '@/lib/format'
+import { computeAtmStrike } from '@/lib/moneyness'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
 import { FnoOrderDialog } from '@/features/orders/FnoOrderDialog'
 import { useAuthStore } from '@/store/authStore'
+import { useQuoteStore } from '@/store/quoteStore'
 import { useWatchlistLayoutStore } from '@/store/watchlistLayoutStore'
 import { WATCHLIST_ENTRY_LIMIT, WATCHLIST_SLOT_COUNT, useWatchlistStructureStore } from '@/store/watchlistStructureStore'
 
@@ -43,7 +46,7 @@ const BROKER_OPTIONS = [
 
 type BrokerKey = (typeof BROKER_OPTIONS)[number]['key']
 
-type WatchlistSearchScope = 'all' | 'cash' | 'fno' | 'indices'
+type WatchlistAddMode = 'all' | 'cash' | 'fno'
 
 function typeLabel(i: instrumentsApi.InstrumentOut | null, fallback: string | null) {
   const t = i?.instrument_type ?? fallback ?? '—'
@@ -155,6 +158,34 @@ function setStoredActiveId(id: number) {
   }
 }
 
+function useDebounced(value: string, delayMs = 250) {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebounced(value), delayMs)
+    return () => window.clearTimeout(handle)
+  }, [value, delayMs])
+  return debounced
+}
+
+function startOfToday(): Date {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function isoDateToDate(iso: string): Date | null {
+  const trimmed = iso.trim()
+  if (!trimmed) return null
+  const d = new Date(`${trimmed}T00:00:00Z`)
+  return Number.isFinite(d.getTime()) ? d : null
+}
+
+function isNotPastIso(iso: string, today = startOfToday()): boolean {
+  const d = isoDateToDate(iso)
+  if (!d) return true
+  return d.getTime() >= today.getTime()
+}
+
 export function WatchlistPage() {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
@@ -167,7 +198,7 @@ export function WatchlistPage() {
   const [banner, setBanner] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [rowMenuOpenId, setRowMenuOpenId] = useState<number | null>(null)
-  const [scope, setScope] = useState<WatchlistSearchScope>('all')
+  const [addMode, setAddMode] = useState<WatchlistAddMode>('all')
 
   const activeSlot = useWatchlistStructureStore((s) => s.activeSlot)
   const setActiveSlot = useWatchlistStructureStore((s) => s.setActiveSlot)
@@ -436,54 +467,244 @@ export function WatchlistPage() {
   const [q, setQ] = useState('')
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [searchFocused, setSearchFocused] = useState(false)
+  const searchFiltersRef = useRef<HTMLDivElement | null>(null)
+  const searchPanelRef = useRef<HTMLDivElement | null>(null)
 
-  const addSearch = useQuery({
-    queryKey: ['watchlist', 'add', q, scope],
+  const debouncedAddQ = useDebounced(q.trim(), 250)
+  const showAddPanel = searchFocused && q.trim().length > 0
+
+  useEffect(() => {
+    if (!showAddPanel) return
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null
+      if (!target) return
+      if (inputRef.current?.contains(target)) return
+      if (searchFiltersRef.current?.contains(target)) return
+      if (searchPanelRef.current?.contains(target)) return
+      setSearchFocused(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => window.removeEventListener('pointerdown', onPointerDown)
+  }, [showAddPanel])
+
+  const getSpot = useQuoteStore((s) => s.getSpot)
+  const setSpot = useQuoteStore((s) => s.setSpot)
+
+  const [expandedUnderlying, setExpandedUnderlying] = useState<string | null>(null)
+  const [previewUnderlying, setPreviewUnderlying] = useState<string | null>(null)
+  const [previewExpiry, setPreviewExpiry] = useState<string | null>(null)
+  const [strikeWindow, setStrikeWindow] = useState(10)
+
+  useEffect(() => {
+    if (!showAddPanel) {
+      setExpandedUnderlying(null)
+      setPreviewUnderlying(null)
+      setPreviewExpiry(null)
+      setStrikeWindow(10)
+    }
+  }, [showAddPanel])
+
+  const addCashSearch = useQuery({
+    queryKey: ['watchlist', 'add', 'cash', debouncedAddQ, addMode],
     queryFn: async () => {
       if (!accessToken) return { items: [] }
-      const trimmed = q.trim()
-      if (!trimmed) return { items: [] }
-
-      if (scope === 'cash') {
-        return instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 25, segment: 'EQUITY' })
-      }
-      if (scope === 'indices') {
-        return instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 25, instrument_type: 'INDEX' })
-      }
-      if (scope === 'fno') {
-        const [futs, opts, idx] = await Promise.all([
-          instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 15, instrument_type: 'FUTURE' }),
-          instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 20, instrument_type: 'OPTION' }),
-          instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 10, instrument_type: 'INDEX' }),
-        ])
-        const map = new Map<string, instrumentsApi.InstrumentOut>()
-        for (const i of [...(futs.items ?? []), ...(opts.items ?? []), ...(idx.items ?? [])]) {
-          map.set(i.canonical_id, i)
-        }
-        const items = Array.from(map.values())
-        const order = (t: instrumentsApi.InstrumentType) =>
-          t === 'FUTURE' ? 0 : t === 'OPTION' ? 1 : t === 'INDEX' ? 2 : 9
-        items.sort((a, b) => {
-          const t = order(a.instrument_type) - order(b.instrument_type)
-          if (t) return t
-          const ea = a.expiry ?? ''
-          const eb = b.expiry ?? ''
-          if (ea !== eb) return ea < eb ? -1 : 1
-          const sa = a.strike ?? 0
-          const sb = b.strike ?? 0
-          if (sa !== sb) return sa - sb
-          const oa = a.option_type ?? ''
-          const ob = b.option_type ?? ''
-          if (oa !== ob) return oa < ob ? -1 : 1
-          return a.display_symbol.localeCompare(b.display_symbol)
-        })
-        return { items }
-      }
-
-      return instrumentsApi.searchInstruments(accessToken, { q: trimmed, limit: 25 })
+      if (!debouncedAddQ.trim()) return { items: [] }
+      if (addMode === 'fno') return { items: [] }
+      return instrumentsApi.searchInstruments(accessToken, { q: debouncedAddQ.trim(), limit: 80 })
     },
-    enabled: Boolean(accessToken) && q.trim().length > 0,
+    enabled: Boolean(accessToken) && debouncedAddQ.trim().length > 0 && addMode !== 'fno' && showAddPanel,
   })
+
+  const addFnoContracts = useQuery({
+    queryKey: ['watchlist', 'add', 'fno', debouncedAddQ, addMode],
+    queryFn: async () => {
+      if (!accessToken) return { futs: [], opts: [] }
+      if (!debouncedAddQ.trim()) return { futs: [], opts: [] }
+      if (addMode !== 'fno' && addMode !== 'all') return { futs: [], opts: [] }
+      const [futs, opts] = await Promise.all([
+        instrumentsApi.searchInstruments(accessToken, { q: debouncedAddQ.trim(), limit: 50, instrument_type: 'FUTURE' }),
+        instrumentsApi.searchInstruments(accessToken, { q: debouncedAddQ.trim(), limit: 80, instrument_type: 'OPTION' }),
+      ])
+      return { futs: futs.items ?? [], opts: opts.items ?? [] }
+    },
+    enabled: Boolean(accessToken) && debouncedAddQ.trim().length > 0 && (addMode === 'fno' || addMode === 'all') && showAddPanel,
+  })
+
+  const cashSections = useMemo(() => {
+    const items = addCashSearch.data?.items ?? []
+    const equities: instrumentsApi.InstrumentOut[] = []
+    const indices: instrumentsApi.InstrumentOut[] = []
+    const etfs: instrumentsApi.InstrumentOut[] = []
+    for (const i of items) {
+      if (i.instrument_type === 'EQUITY') equities.push(i)
+      else if (i.instrument_type === 'INDEX') indices.push(i)
+      else if (i.instrument_type === 'ETF') etfs.push(i)
+    }
+    const byName = (a: instrumentsApi.InstrumentOut, b: instrumentsApi.InstrumentOut) =>
+      a.display_symbol.localeCompare(b.display_symbol)
+    equities.sort(byName)
+    indices.sort(byName)
+    etfs.sort(byName)
+    return { equities, indices, etfs }
+  }, [addCashSearch.data])
+
+  const fnoUnderlyings = useMemo(() => {
+    const items = [...(addFnoContracts.data?.futs ?? []), ...(addFnoContracts.data?.opts ?? [])]
+    const map = new Map<string, { underlying: string; hasOptions: boolean; hasFutures: boolean }>()
+    for (const i of items) {
+      const raw = (i.underlying ?? i.symbol_root ?? '').trim().toUpperCase()
+      if (!raw) continue
+      const prev = map.get(raw) ?? { underlying: raw, hasOptions: false, hasFutures: false }
+      if (i.instrument_type === 'OPTION') prev.hasOptions = true
+      if (i.instrument_type === 'FUTURE') prev.hasFutures = true
+      map.set(raw, prev)
+    }
+    return Array.from(map.values())
+      .sort((a, b) => a.underlying.localeCompare(b.underlying))
+      .slice(0, 15)
+  }, [addFnoContracts.data])
+
+  const previewExpiries = useQuery({
+    queryKey: ['watchlist', 'add', 'derivatives', 'expiries', previewUnderlying],
+    queryFn: async () => {
+      if (!accessToken || !previewUnderlying) return null
+      return instrumentsApi.derivativeExpiries(accessToken, {
+        underlying: previewUnderlying,
+        exchange: 'NSE_FNO',
+        instrument_type: 'OPTION',
+      })
+    },
+    enabled: Boolean(accessToken) && Boolean(previewUnderlying) && showAddPanel,
+  })
+
+  const validPreviewExpiries = useMemo(() => {
+    const today = startOfToday()
+    return (previewExpiries.data?.expiries ?? []).filter((d) => isNotPastIso(d, today))
+  }, [previewExpiries.data])
+
+  useEffect(() => {
+    if (!previewUnderlying) return
+    if (previewExpiry) return
+    const first = validPreviewExpiries[0] ?? null
+    if (first) setPreviewExpiry(first)
+  }, [previewExpiry, previewUnderlying, validPreviewExpiries])
+
+  const previewSpot = useMemo(() => (previewUnderlying ? getSpot(previewUnderlying) : null), [getSpot, previewUnderlying])
+  const brokerConnected = Boolean(brokerStatus.data?.find((b) => b.broker === broker)?.connected)
+
+  const spotFetch = useQuery({
+    queryKey: ['watchlist', 'add', 'spot', broker, previewUnderlying],
+    queryFn: async () => {
+      if (!accessToken || !previewUnderlying) return null
+      const candidates = await instrumentsApi.searchInstruments(accessToken, { q: previewUnderlying, limit: 8 })
+      const best =
+        candidates.items.find((c) => c.instrument_type === 'INDEX') ??
+        candidates.items.find((c) => c.instrument_type === 'EQUITY') ??
+        candidates.items.find((c) => c.instrument_type === 'ETF') ??
+        candidates.items[0] ??
+        null
+      if (!best) return null
+      const quotes = await quotesApi.getQuotes(accessToken, { broker, canonical_ids: [best.canonical_id] })
+      const ltp = quotes.items?.[0]?.ltp ?? null
+      if (ltp != null && Number.isFinite(ltp) && ltp > 0) return ltp
+      return null
+    },
+    enabled: Boolean(accessToken) && Boolean(previewUnderlying) && showAddPanel && brokerConnected && previewSpot == null,
+    staleTime: 10_000,
+    retry: false,
+  })
+
+  useEffect(() => {
+    if (!previewUnderlying) return
+    const v = spotFetch.data
+    if (v != null) setSpot(previewUnderlying, v)
+  }, [previewUnderlying, setSpot, spotFetch.data])
+
+  const previewCe = useQuery({
+    queryKey: ['watchlist', 'add', 'options', previewUnderlying, previewExpiry, 'CE'],
+    queryFn: async () => {
+      if (!accessToken || !previewUnderlying || !previewExpiry) return { items: [] }
+      return instrumentsApi.derivativeOptions(accessToken, {
+        underlying: previewUnderlying,
+        expiry: previewExpiry,
+        exchange: 'NSE_FNO',
+        option_type: 'CE',
+        limit: 800,
+      })
+    },
+    enabled: Boolean(accessToken) && Boolean(previewUnderlying) && Boolean(previewExpiry) && showAddPanel,
+  })
+
+  const previewPe = useQuery({
+    queryKey: ['watchlist', 'add', 'options', previewUnderlying, previewExpiry, 'PE'],
+    queryFn: async () => {
+      if (!accessToken || !previewUnderlying || !previewExpiry) return { items: [] }
+      return instrumentsApi.derivativeOptions(accessToken, {
+        underlying: previewUnderlying,
+        expiry: previewExpiry,
+        exchange: 'NSE_FNO',
+        option_type: 'PE',
+        limit: 800,
+      })
+    },
+    enabled: Boolean(accessToken) && Boolean(previewUnderlying) && Boolean(previewExpiry) && showAddPanel,
+  })
+
+  const previewFutures = useQuery({
+    queryKey: ['watchlist', 'add', 'futures', previewUnderlying],
+    queryFn: async () => {
+      if (!accessToken || !previewUnderlying) return { items: [] }
+      return instrumentsApi.searchInstruments(accessToken, { q: previewUnderlying, limit: 20, instrument_type: 'FUTURE' })
+    },
+    enabled: Boolean(accessToken) && Boolean(previewUnderlying) && showAddPanel,
+  })
+
+  const previewChain = useMemo(() => {
+    const ceItems = previewCe.data?.items ?? []
+    const peItems = previewPe.data?.items ?? []
+    const ceByStrike = new Map<number, instrumentsApi.InstrumentOut>()
+    const peByStrike = new Map<number, instrumentsApi.InstrumentOut>()
+    const strikes: number[] = []
+    for (const i of ceItems) {
+      if (typeof i.strike !== 'number' || !Number.isFinite(i.strike)) continue
+      ceByStrike.set(i.strike, i)
+      strikes.push(i.strike)
+    }
+    for (const i of peItems) {
+      if (typeof i.strike !== 'number' || !Number.isFinite(i.strike)) continue
+      peByStrike.set(i.strike, i)
+      strikes.push(i.strike)
+    }
+    const uniqueStrikes = Array.from(new Set(strikes)).sort((a, b) => a - b)
+    const atm = computeAtmStrike(uniqueStrikes, { spot: previewSpot, anchorStrike: null })
+    const idx = atm != null ? uniqueStrikes.findIndex((s) => s === atm) : -1
+    const anchor = idx >= 0 ? idx : Math.floor((uniqueStrikes.length - 1) / 2)
+    const start = Math.max(0, anchor - strikeWindow)
+    const end = Math.min(uniqueStrikes.length, anchor + strikeWindow + 1)
+    return {
+      ceByStrike,
+      peByStrike,
+      strikes: uniqueStrikes.slice(start, end),
+      atmStrike: atm,
+    }
+  }, [previewCe.data, previewPe.data, previewSpot, strikeWindow])
+
+  const previewFuturesList = useMemo(() => {
+    const today = startOfToday()
+    const items = previewFutures.data?.items ?? []
+    const u = (previewUnderlying ?? '').trim().toUpperCase()
+    return items
+      .filter((i) => i.instrument_type === 'FUTURE')
+      .filter((i) => (i.underlying ?? i.symbol_root ?? '').trim().toUpperCase() === u)
+      .filter((i) => (i.expiry ? isNotPastIso(i.expiry, today) : true))
+      .sort((a, b) => {
+        const ea = a.expiry ?? ''
+        const eb = b.expiry ?? ''
+        if (ea !== eb) return ea < eb ? -1 : 1
+        return a.display_symbol.localeCompare(b.display_symbol)
+      })
+      .slice(0, 6)
+  }, [previewFutures.data, previewUnderlying])
 
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
   const [stockLaunch, setStockLaunch] = useState<ComponentProps<typeof StockOrderDialog>['launch'] | null>(null)
@@ -761,18 +982,15 @@ export function WatchlistPage() {
                   inputRef.current = el
                 }}
                 value={q}
-                onChange={(e) => {
-                  const next = e.target.value
-                  setQ(next)
-                  if (!next.trim()) setScope('all')
-                }}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => {
-                  window.setTimeout(() => setSearchFocused(false), 120)
-                }}
-                placeholder={
-                  isCompact
-                    ? 'Search…'
+	                onChange={(e) => {
+	                  const next = e.target.value
+	                  setQ(next)
+	                  if (!next.trim()) setAddMode('all')
+	                }}
+	                onFocus={() => setSearchFocused(true)}
+	                placeholder={
+	                  isCompact
+	                    ? 'Search…'
                     : 'Search watchlist / add instruments…'
                 }
                 aria-label="Watchlist add search"
@@ -793,140 +1011,631 @@ export function WatchlistPage() {
               ) : null}
             </div>
 
-            {searchFocused && q.trim().length > 0 ? (
-              <div className="mt-2 flex items-center gap-1">
-                {(
-                  [
-                    { key: 'all', label: 'All' },
-                    { key: 'indices', label: 'Indices' },
-                    { key: 'cash', label: 'Cash' },
-                    { key: 'fno', label: 'F&O' },
-                  ] as const
-                ).map((t) => (
-                  <Button
-                    key={t.key}
-                    type="button"
-                    size="sm"
-                    variant={scope === t.key ? 'secondary' : 'ghost'}
-                    onClick={() => setScope(t.key)}
-                  >
-                    {t.label}
-                  </Button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </CardHeader>
+	            {searchFocused && q.trim().length > 0 ? (
+	              <div
+	                ref={searchFiltersRef}
+	                className="mt-2 flex items-center justify-between gap-2 rounded-md border bg-muted/40 p-1 shadow-sm"
+	              >
+	                <div className="flex items-center gap-1">
+	                <Button
+	                  type="button"
+	                  size="sm"
+	                  variant={addMode === 'all' ? 'secondary' : 'ghost'}
+	                  onClick={() => setAddMode('all')}
+                >
+                  All
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={addMode === 'cash' ? 'secondary' : 'ghost'}
+                  onClick={() => setAddMode('cash')}
+                >
+                  Stocks/ETF/Indices
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={addMode === 'fno' ? 'secondary' : 'ghost'}
+	                  onClick={() => setAddMode('fno')}
+	                >
+	                  F&amp;O
+	                </Button>
+	                </div>
+	                <Button
+	                  type="button"
+	                  size="sm"
+	                  variant="ghost"
+	                  onClick={() => {
+	                    setQ('')
+	                    setAddMode('all')
+	                    inputRef.current?.focus()
+	                  }}
+	                >
+	                  Clear
+	                </Button>
+	              </div>
+	            ) : null}
+	          </div>
+	        </CardHeader>
 
         <CardContent>
-          {searchFocused && q.trim().length > 0 ? (
-            <div className="rounded-md border bg-card overflow-hidden">
+	          {searchFocused && q.trim().length > 0 ? (
+	            <div ref={searchPanelRef} className="rounded-md border bg-card overflow-hidden">
               <div className="max-h-[420px] overflow-auto">
-                {addSearch.isFetching ? (
+                {addCashSearch.isFetching || addFnoContracts.isFetching ? (
                   <div className="px-3 py-3 text-sm text-muted-foreground">Searching…</div>
                 ) : null}
-                {(addSearch.data?.items ?? []).map((i) => {
-                  const badge = typeBadge(i)
-                  const already = watchlistCanonicalSet.has(i.canonical_id)
-                  return (
-                    <div
-                      key={i.canonical_id}
-                      className="group flex items-center justify-between gap-3 border-b px-3 py-2 hover:bg-accent/20"
-                      onMouseDown={(e) => e.preventDefault()}
-                    >
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 text-left"
-                        onClick={() => {
-                          if (!activeId) return
-                          if (already) return
-                          if (items.length >= WATCHLIST_ENTRY_LIMIT) {
-                            setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
-                            return
-                          }
-                          void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
-                          setQ('')
-                          inputRef.current?.focus()
-                        }}
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <div className={cn('flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold', badge.className)}>
-                            {badge.label}
-                          </div>
-                          <div className="min-w-0">
+                {addMode !== 'fno' ? (
+                  <div className="divide-y">
+                    {cashSections.equities.length ? (
+                      <div>
+                        <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">Equity</div>
+                        {cashSections.equities.slice(0, 18).map((i) => {
+                          const badge = typeBadge(i)
+                          const already = watchlistCanonicalSet.has(i.canonical_id)
+                          return (
                             <div
-                              className="font-medium leading-tight break-words"
-                              style={{
-                                display: '-webkit-box',
-                                WebkitLineClamp: 2,
-                                WebkitBoxOrient: 'vertical',
-                                overflow: 'hidden',
-                              }}
+                              key={i.canonical_id}
+                              className="group flex items-center justify-between gap-3 border-b px-3 py-2 hover:bg-accent/20"
+                              onMouseDown={(e) => e.preventDefault()}
                             >
-                              {titleForInstrument(i)}
-                            </div>
-                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                              {i.exchange} • {typeLabel(i, null)}
-                            </div>
-                          </div>
-                        </div>
-                      </button>
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 text-left"
+                                onClick={() => {
+                                  if (!activeId) return
+                                  if (already) return
+                                  if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                    setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                    return
+                                  }
+                                  void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
+                                  setQ('')
+                                  inputRef.current?.focus()
+                                }}
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <div className={cn('flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold', badge.className)}>
+                                    {badge.label}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="truncate font-medium">{i.display_symbol}</div>
+                                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                      {i.exchange} • {typeLabel(i, null)}
+                                    </div>
+                                  </div>
+                                </div>
+                              </button>
 
-                      <div
-                        className={cn(
-                          'flex items-center gap-1 opacity-0 transition-opacity',
-                          'group-hover:opacity-100 group-focus-within:opacity-100',
-                        )}
-                      >
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="secondary"
-                          className="h-7 w-7 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
-                          onClick={() => openTradeInstrument(i, 'BUY')}
-                          aria-label="Buy"
-                          title="Buy"
-                        >
-                          B
-                        </Button>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="secondary"
-                          className="h-7 w-7 bg-red-500/10 hover:bg-red-500/15 text-red-800 dark:text-red-200"
-                          onClick={() => openTradeInstrument(i, 'SELL')}
-                          aria-label="Sell"
-                          title="Sell"
-                        >
-                          S
-                        </Button>
+                              <div className={cn('flex items-center gap-1 opacity-0 transition-opacity', 'group-hover:opacity-100 group-focus-within:opacity-100')}>
+	                                    <Button
+	                                      type="button"
+	                                      size="icon"
+	                                      variant="secondary"
+                                  className="h-7 w-7 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
+                                  onClick={() => openTradeInstrument(i, 'BUY')}
+                                  aria-label="Buy"
+                                  title="Buy"
+                                >
+                                  B
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="secondary"
+                                  className="h-7 w-7 bg-red-500/10 hover:bg-red-500/15 text-red-800 dark:text-red-200"
+                                  onClick={() => openTradeInstrument(i, 'SELL')}
+                                  aria-label="Sell"
+                                  title="Sell"
+                                >
+                                  S
+                                </Button>
+                              </div>
+
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                aria-label={already ? 'Already in watchlist' : 'Add to watchlist'}
+                                disabled={already || !activeId}
+                                onClick={() => {
+                                  if (!activeId) return
+                                  if (already) return
+                                  if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                    setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                    return
+                                  }
+                                  void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
+                                  setQ('')
+                                  inputRef.current?.focus()
+                                }}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )
+                        })}
                       </div>
+                    ) : null}
 
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        aria-label={already ? 'Already in watchlist' : 'Add to watchlist'}
-                        disabled={already || !activeId}
-                        onClick={() => {
-                          if (!activeId) return
-                          if (already) return
-                          if (items.length >= WATCHLIST_ENTRY_LIMIT) {
-                            setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
-                            return
-                          }
-                          void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
-                          setQ('')
-                          inputRef.current?.focus()
-                        }}
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
+                    {cashSections.indices.length ? (
+                      <div>
+                        <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">Index</div>
+                        {cashSections.indices.slice(0, 10).map((i) => {
+                          const badge = typeBadge(i)
+                          const already = watchlistCanonicalSet.has(i.canonical_id)
+                          return (
+                            <div
+                              key={i.canonical_id}
+                              className="group flex items-center justify-between gap-3 border-b px-3 py-2 hover:bg-accent/20"
+                              onMouseDown={(e) => e.preventDefault()}
+                            >
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 text-left"
+                                onClick={() => {
+                                  if (!activeId) return
+                                  if (already) return
+                                  if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                    setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                    return
+                                  }
+                                  void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
+                                  setQ('')
+                                  inputRef.current?.focus()
+                                }}
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <div className={cn('flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold', badge.className)}>
+                                    {badge.label}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="truncate font-medium">{i.display_symbol}</div>
+                                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                      {i.exchange} • {typeLabel(i, null)}
+                                    </div>
+                                  </div>
+                                </div>
+                              </button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                aria-label={already ? 'Already in watchlist' : 'Add to watchlist'}
+                                disabled={already || !activeId}
+                                onClick={() => {
+                                  if (!activeId) return
+                                  if (already) return
+                                  if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                    setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                    return
+                                  }
+                                  void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
+                                  setQ('')
+                                  inputRef.current?.focus()
+                                }}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : null}
+
+                    {cashSections.etfs.length ? (
+                      <div>
+                        <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">ETF</div>
+                        {cashSections.etfs.slice(0, 10).map((i) => {
+                          const badge = typeBadge(i)
+                          const already = watchlistCanonicalSet.has(i.canonical_id)
+                          return (
+                            <div
+                              key={i.canonical_id}
+                              className="group flex items-center justify-between gap-3 border-b px-3 py-2 hover:bg-accent/20"
+                              onMouseDown={(e) => e.preventDefault()}
+                            >
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 text-left"
+                                onClick={() => {
+                                  if (!activeId) return
+                                  if (already) return
+                                  if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                    setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                    return
+                                  }
+                                  void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
+                                  setQ('')
+                                  inputRef.current?.focus()
+                                }}
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <div className={cn('flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold', badge.className)}>
+                                    {badge.label}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="truncate font-medium">{i.display_symbol}</div>
+                                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                      {i.exchange} • {typeLabel(i, null)}
+                                    </div>
+                                  </div>
+                                </div>
+                              </button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                aria-label={already ? 'Already in watchlist' : 'Add to watchlist'}
+                                disabled={already || !activeId}
+                                onClick={() => {
+                                  if (!activeId) return
+                                  if (already) return
+                                  if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                    setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                    return
+                                  }
+                                  void addItem.mutate({ watchlistId: activeId, canonicalId: i.canonical_id, groupId: activeGroupId })
+                                  setQ('')
+                                  inputRef.current?.focus()
+                                }}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {addMode !== 'cash' ? (
+                  <div className="mt-2 border-t">
+                    <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">F&amp;O underlyings</div>
+                    <div className="divide-y">
+                      {fnoUnderlyings.map((u) => {
+                        const open = expandedUnderlying === u.underlying
+                        return (
+                          <div key={u.underlying} className="px-3 py-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                className="min-w-0 truncate font-medium text-left hover:underline"
+                                onClick={() => {
+                                  const next = u.underlying
+                                  const opening = expandedUnderlying !== next
+                                  setExpandedUnderlying(opening ? next : null)
+                                  if (opening) {
+                                    setPreviewUnderlying(next)
+                                    setPreviewExpiry(null)
+                                    setStrikeWindow(10)
+                                  } else {
+                                    setPreviewUnderlying(null)
+                                    setPreviewExpiry(null)
+                                  }
+                                }}
+                              >
+                                {u.underlying}
+                              </button>
+                              <div className="flex items-center gap-2">
+                                {u.hasFutures ? <Badge variant="outline">FUT</Badge> : null}
+                                {u.hasOptions ? <Badge variant="outline">OPT</Badge> : null}
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    if (!activeId) return
+                                    if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                      setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                      return
+                                    }
+                                    void addUnderlying.mutate({ watchlistId: activeId, underlying: u.underlying, groupId: activeGroupId })
+                                    setQ('')
+                                    inputRef.current?.focus()
+                                  }}
+                                >
+                                  Add underlying
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openUnderlyingTicket(u.underlying)}
+                                >
+                                  Trade
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    const next = u.underlying
+                                    const opening = expandedUnderlying !== next
+                                    setExpandedUnderlying(opening ? next : null)
+                                    if (opening) {
+                                      setPreviewUnderlying(next)
+                                      setPreviewExpiry(null)
+                                      setStrikeWindow(10)
+                                    } else {
+                                      setPreviewUnderlying(null)
+                                      setPreviewExpiry(null)
+                                    }
+                                  }}
+                                >
+                                  {open ? 'Hide' : 'Show'}
+                                </Button>
+                              </div>
+                            </div>
+
+                            {open && previewUnderlying === u.underlying ? (
+                              <div className="mt-3 rounded-md border bg-muted/10 p-3">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                  <div className="text-xs text-muted-foreground">
+                                    {previewSpot != null ? (
+                                      <>
+                                        Spot <span className="font-medium tabular-nums">{previewSpot}</span>
+                                      </>
+                                    ) : (
+                                      'Spot: —'
+                                    )}{' '}
+                                    {previewChain.atmStrike != null ? (
+                                      <>
+                                        • ATM <span className="font-medium tabular-nums">{previewChain.atmStrike}</span>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <select
+                                      aria-label="Expiry"
+                                      value={previewExpiry ?? ''}
+                                      onChange={(e) => setPreviewExpiry(e.target.value || null)}
+                                      disabled={!previewUnderlying || previewExpiries.isFetching}
+                                      className={cn(
+                                        'h-8 rounded-md border border-input bg-card px-2 text-xs outline-none shadow-sm',
+                                        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                                      )}
+                                    >
+                                      <option value="">Expiry</option>
+                                      {validPreviewExpiries.map((d) => (
+                                        <option key={d} value={d}>
+                                          {d}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setStrikeWindow((w) => (w === 10 ? 20 : 10))}
+                                      disabled={!previewExpiry}
+                                    >
+                                      {strikeWindow === 10 ? 'More' : 'Less'}
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                {previewFuturesList.length ? (
+                                  <div className="mt-3">
+                                    <div className="text-xs font-medium text-muted-foreground">Futures (upcoming)</div>
+                                    <div className="mt-2 flex flex-col gap-2">
+                                      {previewFuturesList.map((f) => {
+                                        const already = watchlistCanonicalSet.has(f.canonical_id)
+                                        return (
+                                          <div key={f.canonical_id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-2 py-2">
+                                            <div className="min-w-0">
+                                              <div className="font-medium">{titleForInstrument(f)}</div>
+                                              <div className="mt-0.5 text-xs text-muted-foreground">
+                                                {f.expiry ?? '—'} • lot {f.lot_size ?? '—'}
+                                              </div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                disabled={already || !activeId}
+                                                onClick={() => {
+                                                  if (!activeId) return
+                                                  if (already) return
+                                                  if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                                    setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                                    return
+                                                  }
+                                                  void addItem.mutate({ watchlistId: activeId, canonicalId: f.canonical_id, groupId: activeGroupId })
+                                                  setQ('')
+                                                  inputRef.current?.focus()
+                                                }}
+                                              >
+                                                Add
+                                              </Button>
+                                              <Button
+                                                type="button"
+                                                size="icon"
+                                                variant="secondary"
+                                                className="h-7 w-7 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
+                                                onClick={() => openTradeInstrument(f, 'BUY')}
+                                                aria-label="Buy"
+                                                title="Buy"
+                                              >
+                                                B
+                                              </Button>
+                                              <Button
+                                                type="button"
+                                                size="icon"
+                                                variant="secondary"
+                                                className="h-7 w-7 bg-red-500/10 hover:bg-red-500/15 text-red-800 dark:text-red-200"
+                                                onClick={() => openTradeInstrument(f, 'SELL')}
+                                                aria-label="Sell"
+                                                title="Sell"
+                                              >
+                                                S
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {previewExpiry && previewChain.strikes.length ? (
+                                  <div className="mt-4">
+                                    <div className="text-xs font-medium text-muted-foreground">
+                                      Options (±{strikeWindow} around ATM) • {previewExpiry}
+                                    </div>
+                                    <div className="mt-2 overflow-auto rounded-md border bg-card">
+                                      <div className="grid grid-cols-[1fr_auto_1fr] gap-0 text-xs">
+                                        <div className="border-b px-3 py-2 font-medium text-muted-foreground">Calls</div>
+                                        <div className="border-b px-3 py-2 font-medium text-muted-foreground text-center">Strike</div>
+                                        <div className="border-b px-3 py-2 font-medium text-muted-foreground text-right">Puts</div>
+                                        {previewChain.strikes.map((s) => {
+                                          const ce = previewChain.ceByStrike.get(s) ?? null
+                                          const pe = previewChain.peByStrike.get(s) ?? null
+                                          const ceAlready = ce ? watchlistCanonicalSet.has(ce.canonical_id) : false
+                                          const peAlready = pe ? watchlistCanonicalSet.has(pe.canonical_id) : false
+                                          return (
+                                            <div key={s} className="contents">
+                                              <div className="border-b px-3 py-2">
+                                                {ce ? (
+                                                  <div className="flex items-center gap-2">
+                                                    <Badge variant="outline">CE</Badge>
+                                                    <Button
+                                                      type="button"
+                                                      size="sm"
+                                                      variant="outline"
+                                                      disabled={ceAlready || !activeId}
+                                                      onClick={() => {
+                                                        if (!activeId) return
+                                                        if (ceAlready) return
+                                                        if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                                          setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                                          return
+                                                        }
+                                                        void addItem.mutate({ watchlistId: activeId, canonicalId: ce.canonical_id, groupId: activeGroupId })
+                                                        setQ('')
+                                                        inputRef.current?.focus()
+                                                      }}
+                                                    >
+                                                      Add
+                                                    </Button>
+                                                    <Button
+                                                      type="button"
+                                                      size="icon"
+                                                      variant="secondary"
+                                                      className="h-7 w-7 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
+                                                      onClick={() => openTradeInstrument(ce, 'BUY')}
+                                                      aria-label="Buy"
+                                                      title="Buy"
+                                                    >
+                                                      B
+                                                    </Button>
+                                                    <Button
+                                                      type="button"
+                                                      size="icon"
+                                                      variant="secondary"
+                                                      className="h-7 w-7 bg-red-500/10 hover:bg-red-500/15 text-red-800 dark:text-red-200"
+                                                      onClick={() => openTradeInstrument(ce, 'SELL')}
+                                                      aria-label="Sell"
+                                                      title="Sell"
+                                                    >
+                                                      S
+                                                    </Button>
+                                                  </div>
+                                                ) : (
+                                                  <span className="text-muted-foreground">—</span>
+                                                )}
+                                              </div>
+                                              <div className="border-b px-3 py-2 text-center tabular-nums">
+                                                {formatStrikeHuman(s, previewUnderlying)}
+                                                {previewChain.atmStrike != null && s === previewChain.atmStrike ? (
+                                                  <span className="ml-2 text-[11px] text-muted-foreground">ATM</span>
+                                                ) : null}
+                                              </div>
+                                              <div className="border-b px-3 py-2 flex justify-end">
+                                                {pe ? (
+                                                  <div className="flex items-center gap-2">
+                                                    <Button
+                                                      type="button"
+                                                      size="sm"
+                                                      variant="outline"
+                                                      disabled={peAlready || !activeId}
+                                                      onClick={() => {
+                                                        if (!activeId) return
+                                                        if (peAlready) return
+                                                        if (items.length >= WATCHLIST_ENTRY_LIMIT) {
+                                                          setBanner(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+                                                          return
+                                                        }
+                                                        void addItem.mutate({ watchlistId: activeId, canonicalId: pe.canonical_id, groupId: activeGroupId })
+                                                        setQ('')
+                                                        inputRef.current?.focus()
+                                                      }}
+                                                    >
+                                                      Add
+                                                    </Button>
+                                                    <Button
+                                                      type="button"
+                                                      size="icon"
+                                                      variant="secondary"
+                                                      className="h-7 w-7 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
+                                                      onClick={() => openTradeInstrument(pe, 'BUY')}
+                                                      aria-label="Buy"
+                                                      title="Buy"
+                                                    >
+                                                      B
+                                                    </Button>
+                                                    <Button
+                                                      type="button"
+                                                      size="icon"
+                                                      variant="secondary"
+                                                      className="h-7 w-7 bg-red-500/10 hover:bg-red-500/15 text-red-800 dark:text-red-200"
+                                                      onClick={() => openTradeInstrument(pe, 'SELL')}
+                                                      aria-label="Sell"
+                                                      title="Sell"
+                                                    >
+                                                      S
+                                                    </Button>
+                                                    <Badge variant="outline">PE</Badge>
+                                                  </div>
+                                                ) : (
+                                                  <span className="text-muted-foreground">—</span>
+                                                )}
+                                              </div>
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                    </div>
+                                    <div className="mt-2 text-xs text-muted-foreground">
+                                      Need deeper strikes? Use “More”, or add the underlying and use Order/Strike discovery.
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+
+                      {!addFnoContracts.isFetching && fnoUnderlyings.length === 0 ? (
+                        <div className="px-3 py-4 text-sm text-muted-foreground">
+                          No underlyings found. Sync F&amp;O (underlyings) first.
+                        </div>
+                      ) : null}
                     </div>
-                  )
-                })}
+                  </div>
+                ) : null}
 
-                {!addSearch.isFetching && (addSearch.data?.items ?? []).length === 0 ? (
+                {!addCashSearch.isFetching &&
+                !addFnoContracts.isFetching &&
+                addMode !== 'fno' &&
+                cashSections.equities.length === 0 &&
+                cashSections.indices.length === 0 &&
+                cashSections.etfs.length === 0 &&
+                (addMode === 'cash' || fnoUnderlyings.length === 0) ? (
                   <div className="px-3 py-4 text-sm text-muted-foreground">No matches.</div>
                 ) : null}
 
@@ -1122,12 +1831,29 @@ export function WatchlistPage() {
                                       aria-label="Sell"
                                       title="Sell"
                                     >
-                                      S
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      size="icon"
-                                      variant="ghost"
+	                                      S
+	                                    </Button>
+	                                    <Button
+	                                      type="button"
+	                                      size="icon"
+	                                      variant="ghost"
+	                                      aria-label="Remove"
+	                                      title="Remove"
+	                                      className="h-7 w-7 text-muted-foreground hover:text-red-600"
+	                                      onClick={() => {
+	                                        if (!activeId) return
+	                                        const entryKey = item.canonical_id ?? item.symbol_key
+	                                        if (!entryKey) return
+	                                        setRowMenuOpenId(null)
+	                                        void removeItem.mutate({ watchlistId: activeId, itemId: item.id, entryKey })
+	                                      }}
+	                                    >
+	                                      <Trash2 className="h-4 w-4" />
+	                                    </Button>
+	                                    <Button
+	                                      type="button"
+	                                      size="icon"
+	                                      variant="ghost"
                                       aria-label="More"
                                       title="More"
                                       onClick={() => setRowMenuOpenId((v) => (v === item.id ? null : item.id))}
@@ -1221,14 +1947,14 @@ export function WatchlistPage() {
                       aria-label={`Watchlist slot ${t.slot}`}
                       title={t.name}
                       disabled={disabled}
-                      onClick={() => {
-                        if (!t.watchlistId) return
-                        setActiveSlot(t.slot)
-                        setStoredActiveId(t.watchlistId)
-                        setRowMenuOpenId(null)
-                        setQ('')
-                        setScope('all')
-                      }}
+	                      onClick={() => {
+	                        if (!t.watchlistId) return
+	                        setActiveSlot(t.slot)
+	                        setStoredActiveId(t.watchlistId)
+	                        setRowMenuOpenId(null)
+	                        setQ('')
+	                        setAddMode('all')
+	                      }}
                       className={cn(
                         'h-8 w-8 rounded-md text-sm tabular-nums transition-colors',
                         active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/30 hover:text-foreground',
