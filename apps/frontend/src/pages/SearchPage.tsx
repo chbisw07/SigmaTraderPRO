@@ -10,12 +10,16 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import * as instrumentsApi from '@/lib/api/instruments'
+import * as quotesApi from '@/lib/api/quotes'
 import * as watchlistsApi from '@/lib/api/watchlists'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useQuoteStore } from '@/store/quoteStore'
+import { WATCHLIST_ENTRY_LIMIT } from '@/store/watchlistStructureStore'
+import { useWatchlistStructureStore } from '@/store/watchlistStructureStore'
 import { computeAtmStrike, computeMoneyness, moneynessBadgeClasses } from '@/lib/moneyness'
 import { formatStrikeHuman } from '@/lib/format'
 import { StockOrderDialog } from '@/features/orders/StockOrderDialog'
@@ -28,6 +32,44 @@ function useDebounced(value: string, delayMs = 250) {
     return () => window.clearTimeout(handle)
   }, [value, delayMs])
   return debounced
+}
+
+function parseUnderlyingsCsv(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean)
+}
+
+function uniqueSortedCsv(items: Iterable<string>): string {
+  return Array.from(
+    new Set(
+      Array.from(items)
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  )
+    .sort((a, b) => a.localeCompare(b))
+    .join(',')
+}
+
+function startOfToday(): Date {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function isoDateToDate(iso: string): Date | null {
+  const trimmed = iso.trim()
+  if (!trimmed) return null
+  const d = new Date(`${trimmed}T00:00:00Z`)
+  return Number.isFinite(d.getTime()) ? d : null
+}
+
+function isNotPastIso(iso: string, today = startOfToday()): boolean {
+  const d = isoDateToDate(iso)
+  if (!d) return true
+  return d.getTime() >= today.getTime()
 }
 
 function TypeBadge({
@@ -107,6 +149,46 @@ type BrokerKey = (typeof BROKER_OPTIONS)[number]['key']
 const EMPTY_INSTRUMENTS: instrumentsApi.InstrumentOut[] = []
 
 const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
+const FNO_UNIVERSE_KEY = 'sigmatraderpro.fno.universe'
+
+const COMMON_FNO_UNDERLYINGS_LIST = [
+  'NIFTY',
+  'BANKNIFTY',
+  'FINNIFTY',
+  'MIDCPNIFTY',
+  'HDFCBANK',
+  'RELIANCE',
+  'INFY',
+  'TCS',
+  'ICICIBANK',
+  'SBIN',
+  'AXISBANK',
+  'KOTAKBANK',
+  'LT',
+  'ITC',
+  'BHARTIARTL',
+  'HINDUNILVR',
+  'ADANIENT',
+  'TATAMOTORS',
+  'BAJFINANCE',
+  'BAJAJFINSV',
+  'ASIANPAINT',
+  'HCLTECH',
+  'ONGC',
+  'POWERGRID',
+  'NTPC',
+  'SUNPHARMA',
+  'DRREDDY',
+  'INDUSINDBK',
+  'ULTRACEMCO',
+  'TITAN',
+  'MARUTI',
+  'JSWSTEEL',
+  'TATASTEEL',
+  'COALINDIA',
+] as const
+
+const COMMON_FNO_UNDERLYINGS_SET = new Set<string>(COMMON_FNO_UNDERLYINGS_LIST as unknown as string[])
 
 function safeStoredActiveWatchlistId(): number | null {
   if (typeof window === 'undefined') return null
@@ -120,6 +202,18 @@ function safeStoredActiveWatchlistId(): number | null {
   }
 }
 
+function safeStoredFnoUniverseCsv(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(FNO_UNIVERSE_KEY)
+    if (!raw) return null
+    const list = parseUnderlyingsCsv(raw)
+    return list.length ? uniqueSortedCsv(list) : null
+  } catch {
+    return null
+  }
+}
+
 export function SearchPage() {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
@@ -128,6 +222,7 @@ export function SearchPage() {
 
   const getPremium = useQuoteStore((s) => s.getPremium)
   const getSpot = useQuoteStore((s) => s.getSpot)
+  const setSpot = useQuoteStore((s) => s.setSpot)
 
   const selectedBroker = (user?.last_used_broker as BrokerKey | null) ?? null
 
@@ -136,7 +231,12 @@ export function SearchPage() {
   const [syncBusy, setSyncBusy] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const [watchlistMsg, setWatchlistMsg] = useState<string | null>(null)
-  const [syncUnderlyings, setSyncUnderlyings] = useState('NIFTY,BANKNIFTY')
+  const [syncUnderlyings, setSyncUnderlyings] = useState(() => safeStoredFnoUniverseCsv() ?? 'NIFTY,BANKNIFTY')
+  const [fnoUniverseOpen, setFnoUniverseOpen] = useState(false)
+  const [fnoUniverseFilter, setFnoUniverseFilter] = useState('')
+  const [fnoUniverseAdd, setFnoUniverseAdd] = useState('')
+  const [fnoUniverseSelected, setFnoUniverseSelected] = useState<string[]>([])
+  const [fnoUniverseCustomPool, setFnoUniverseCustomPool] = useState<string[]>([])
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
   const [stockLaunch, setStockLaunch] = useState<
     | { mode: 'manual'; broker?: BrokerKey | null }
@@ -150,7 +250,7 @@ export function SearchPage() {
   >(null)
   const [fnoDialogOpen, setFnoDialogOpen] = useState(false)
   const [fnoLaunch, setFnoLaunch] = useState<
-    | { mode: 'manual'; broker?: BrokerKey | null }
+    | { mode: 'manual'; broker?: BrokerKey | null; prefill?: { underlying?: string; side?: 'BUY' | 'SELL' } }
     | {
         mode: 'contract'
         instrument: instrumentsApi.InstrumentOut
@@ -161,47 +261,184 @@ export function SearchPage() {
   >(null)
 
   const [q, setQ] = useState('')
-  const [filterType, setFilterType] = useState<
-    'all' | instrumentsApi.InstrumentType
-  >('all')
+  const [searchMode, setSearchMode] = useState<'all' | 'cash' | 'fno'>('all')
   const debouncedQ = useDebounced(q.trim(), 300)
 
+  const setEntryGroup = useWatchlistStructureStore((s) => s.setEntryGroup)
+
+  const fnoSelectedCount = useMemo(() => parseUnderlyingsCsv(syncUnderlyings).length, [syncUnderlyings])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(FNO_UNIVERSE_KEY, syncUnderlyings)
+    } catch {
+      // ignore
+    }
+  }, [syncUnderlyings])
+
+  useEffect(() => {
+    if (!fnoUniverseOpen) return
+    const current = parseUnderlyingsCsv(syncUnderlyings)
+    setFnoUniverseSelected(current)
+    setFnoUniverseCustomPool(current.filter((u) => !COMMON_FNO_UNDERLYINGS_SET.has(u)))
+    setFnoUniverseFilter('')
+    setFnoUniverseAdd('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fnoUniverseOpen])
+
+  const toggleFnoUniverse = (u: string) => {
+    setFnoUniverseSelected((prev) => {
+      const next = u.trim().toUpperCase()
+      if (!next) return prev
+      return prev.includes(next) ? prev.filter((x) => x !== next) : [...prev, next]
+    })
+  }
+
+  const fnoUniverseCommonFiltered = useMemo(() => {
+    const needle = fnoUniverseFilter.trim().toUpperCase()
+    const items = COMMON_FNO_UNDERLYINGS_LIST as unknown as string[]
+    if (!needle) return items
+    return items.filter((x) => x.includes(needle))
+  }, [fnoUniverseFilter])
+
+  const fnoUniverseCustomFiltered = useMemo(() => {
+    const needle = fnoUniverseFilter.trim().toUpperCase()
+    const items = fnoUniverseCustomPool
+    if (!needle) return items
+    return items.filter((x) => x.includes(needle))
+  }, [fnoUniverseCustomPool, fnoUniverseFilter])
+
+  const fnoUniverseSelectedSet = useMemo(() => new Set(fnoUniverseSelected), [fnoUniverseSelected])
+
+  const addCustomFnoUniverse = () => {
+    const adds = parseUnderlyingsCsv(fnoUniverseAdd)
+    if (!adds.length) return
+    setFnoUniverseCustomPool((prev) => {
+      const next = new Set(prev.map((s) => s.trim().toUpperCase()).filter(Boolean))
+      for (const u of adds) next.add(u)
+      return Array.from(next).sort((a, b) => a.localeCompare(b))
+    })
+    setFnoUniverseSelected((prev) => uniqueSortedCsv([...prev, ...adds]).split(',').filter(Boolean))
+    setFnoUniverseAdd('')
+  }
+
+  const applyFnoUniverse = () => {
+    setSyncUnderlyings(uniqueSortedCsv(fnoUniverseSelected))
+    setFnoUniverseOpen(false)
+  }
+
+  const resetFnoUniverseToCommon = () => {
+    setFnoUniverseSelected((COMMON_FNO_UNDERLYINGS_LIST as unknown as string[]).slice())
+  }
+
+  const clearFnoUniverse = () => {
+    setFnoUniverseSelected([])
+  }
+
   const addToWatchlist = useMutation({
-    mutationFn: async (canonicalId: string) => {
+    mutationFn: async (payload: { canonical_id?: string | null; underlying?: string | null }) => {
       if (!accessToken) throw new Error('no auth')
       const activeId = safeStoredActiveWatchlistId()
       if (activeId) {
+        const cached = queryClient.getQueryData<watchlistsApi.WatchlistItemsResponse | null>([
+          'watchlists',
+          'items',
+          activeId,
+        ])
+        const count = cached?.items?.length ?? null
+        if (count != null && count >= WATCHLIST_ENTRY_LIMIT) {
+          throw new Error('WATCHLIST_LIMIT')
+        }
         try {
-          return await watchlistsApi.addWatchlistItem(accessToken, activeId, {
-            canonical_id: canonicalId,
-          })
+          return await watchlistsApi.addWatchlistItem(accessToken, activeId, payload)
         } catch {
           // Fall back to default watchlist if active is stale/missing.
         }
       }
-      return watchlistsApi.addWatchlistItemDefault(accessToken, { canonical_id: canonicalId })
+      return watchlistsApi.addWatchlistItemDefault(accessToken, payload)
     },
-    onSuccess: async () => {
+    onSuccess: async (created) => {
       setWatchlistMsg('Added to watchlist')
+      const activeId = safeStoredActiveWatchlistId()
+      if (activeId) {
+        const groupId = useWatchlistStructureStore.getState().activeGroupByWatchlistId[activeId] ?? 'default'
+        const entryKey = created.canonical_id ?? created.symbol_key
+        if (entryKey) setEntryGroup(activeId, entryKey, groupId)
+      }
       await queryClient.invalidateQueries({ queryKey: ['watchlists'] })
     },
-    onError: () => setWatchlistMsg('Add to watchlist failed'),
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : ''
+      if (msg === 'WATCHLIST_LIMIT') {
+        setWatchlistMsg(`Max ${WATCHLIST_ENTRY_LIMIT} entries per watchlist`)
+        return
+      }
+      setWatchlistMsg('Add to watchlist failed')
+    },
   })
 
-  const search = useQuery({
-    queryKey: ['instruments', 'search', debouncedQ, filterType],
+  const rawSearch = useQuery({
+    queryKey: ['instruments', 'search', debouncedQ, searchMode],
     queryFn: async () => {
       if (!accessToken) return { items: [] }
+      if (searchMode === 'fno') return { items: [] }
       return instrumentsApi.searchInstruments(accessToken, {
         q: debouncedQ,
-        limit: 50,
-        instrument_type: filterType === 'all' ? undefined : filterType,
+        limit: 80,
       })
     },
     enabled: Boolean(accessToken) && debouncedQ.length > 0,
   })
 
-  const results = search.data?.items ?? []
+  const fnoContracts = useQuery({
+    queryKey: ['instruments', 'search', 'fno', debouncedQ, searchMode],
+    queryFn: async () => {
+      if (!accessToken) return { futs: EMPTY_INSTRUMENTS, opts: EMPTY_INSTRUMENTS }
+      if (searchMode !== 'fno' && searchMode !== 'all') return { futs: EMPTY_INSTRUMENTS, opts: EMPTY_INSTRUMENTS }
+      const [futs, opts] = await Promise.all([
+        instrumentsApi.searchInstruments(accessToken, { q: debouncedQ, limit: 50, instrument_type: 'FUTURE' }),
+        instrumentsApi.searchInstruments(accessToken, { q: debouncedQ, limit: 80, instrument_type: 'OPTION' }),
+      ])
+      return { futs: futs.items ?? EMPTY_INSTRUMENTS, opts: opts.items ?? EMPTY_INSTRUMENTS }
+    },
+    enabled: Boolean(accessToken) && debouncedQ.length > 0 && (searchMode === 'fno' || searchMode === 'all'),
+  })
+
+  const rawResults = rawSearch.data?.items ?? EMPTY_INSTRUMENTS
+
+  const cashSections = useMemo(() => {
+    const equities: instrumentsApi.InstrumentOut[] = []
+    const indices: instrumentsApi.InstrumentOut[] = []
+    const etfs: instrumentsApi.InstrumentOut[] = []
+    for (const i of rawResults) {
+      if (i.instrument_type === 'EQUITY') equities.push(i)
+      else if (i.instrument_type === 'INDEX') indices.push(i)
+      else if (i.instrument_type === 'ETF') etfs.push(i)
+    }
+    const byName = (a: instrumentsApi.InstrumentOut, b: instrumentsApi.InstrumentOut) =>
+      a.display_symbol.localeCompare(b.display_symbol)
+    equities.sort(byName)
+    indices.sort(byName)
+    etfs.sort(byName)
+    return { equities, indices, etfs }
+  }, [rawResults])
+
+  const fnoUnderlyings = useMemo(() => {
+    const items = [...(fnoContracts.data?.futs ?? []), ...(fnoContracts.data?.opts ?? [])]
+    const map = new Map<string, { underlying: string; hasOptions: boolean; hasFutures: boolean }>()
+    for (const i of items) {
+      const raw = (i.underlying ?? i.symbol_root ?? '').trim().toUpperCase()
+      if (!raw) continue
+      const prev = map.get(raw) ?? { underlying: raw, hasOptions: false, hasFutures: false }
+      if (i.instrument_type === 'OPTION') prev.hasOptions = true
+      if (i.instrument_type === 'FUTURE') prev.hasFutures = true
+      map.set(raw, prev)
+    }
+    return Array.from(map.values())
+      .sort((a, b) => a.underlying.localeCompare(b.underlying))
+      .slice(0, 15)
+  }, [fnoContracts.data])
 
   const [underlyingQ, setUnderlyingQ] = useState('')
   const debouncedUnderlying = useDebounced(underlyingQ.trim(), 250)
@@ -237,10 +474,16 @@ export function SearchPage() {
   const [underlying, setUnderlying] = useState<string | null>(null)
   const [expiry, setExpiry] = useState<string | null>(null)
   const [optionType, setOptionType] = useState<instrumentsApi.OptionType>('CE')
+  const [expandedUnderlying, setExpandedUnderlying] = useState<string | null>(null)
+  const [strikeWindow, setStrikeWindow] = useState(10)
 
   useEffect(() => {
     setExpiry(null)
   }, [underlying])
+
+  useEffect(() => {
+    if (searchMode === 'cash') setExpandedUnderlying(null)
+  }, [searchMode])
 
   const expiries = useQuery({
     queryKey: ['instruments', 'derivatives', 'expiries', underlying],
@@ -254,6 +497,19 @@ export function SearchPage() {
     },
     enabled: Boolean(accessToken) && Boolean(underlying),
   })
+
+  const validExpiries = useMemo(() => {
+    const today = startOfToday()
+    const list = expiries.data?.expiries ?? []
+    return list.filter((d) => isNotPastIso(d, today))
+  }, [expiries.data])
+
+  useEffect(() => {
+    if (!underlying) return
+    if (expiry) return
+    const first = validExpiries[0] ?? null
+    if (first) setExpiry(first)
+  }, [expiry, underlying, validExpiries])
 
   const optionChain = useQuery({
     queryKey: ['instruments', 'derivatives', 'options', underlying, expiry, optionType],
@@ -278,6 +534,118 @@ export function SearchPage() {
       .filter((s): s is number => typeof s === 'number' && Number.isFinite(s))
     return computeAtmStrike(strikes, { spot: chainSpot, anchorStrike: null })
   }, [chainItems, chainSpot])
+
+  const showPreview = Boolean(expandedUnderlying && underlying && expandedUnderlying === underlying)
+
+  const spotFetch = useQuery({
+    queryKey: ['quotes', 'spot', selectedBroker, underlying],
+    queryFn: async () => {
+      if (!accessToken || !selectedBroker || !underlying) return null
+      const candidates = await instrumentsApi.searchInstruments(accessToken, { q: underlying, limit: 8 })
+      const best =
+        candidates.items.find((c) => c.instrument_type === 'INDEX') ??
+        candidates.items.find((c) => c.instrument_type === 'EQUITY') ??
+        candidates.items.find((c) => c.instrument_type === 'ETF') ??
+        candidates.items[0] ??
+        null
+      if (!best) return null
+      const quotes = await quotesApi.getQuotes(accessToken, { broker: selectedBroker, canonical_ids: [best.canonical_id] })
+      const ltp = quotes.items?.[0]?.ltp ?? null
+      if (ltp != null && Number.isFinite(ltp) && ltp > 0) return ltp
+      return null
+    },
+    enabled: Boolean(accessToken) && Boolean(selectedBroker) && Boolean(underlying) && showPreview && chainSpot == null,
+    staleTime: 10_000,
+  })
+
+  useEffect(() => {
+    if (!underlying) return
+    const v = spotFetch.data
+    if (v != null) setSpot(underlying, v)
+  }, [setSpot, spotFetch.data, underlying])
+
+  const previewCe = useQuery({
+    queryKey: ['instruments', 'derivatives', 'options', 'preview', underlying, expiry, 'CE', showPreview],
+    queryFn: async () => {
+      if (!accessToken || !underlying || !expiry || !showPreview) return { items: [] }
+      return instrumentsApi.derivativeOptions(accessToken, {
+        underlying,
+        expiry,
+        exchange: 'NSE_FNO',
+        option_type: 'CE',
+        limit: 800,
+      })
+    },
+    enabled: Boolean(accessToken) && Boolean(underlying) && Boolean(expiry) && showPreview,
+  })
+
+  const previewPe = useQuery({
+    queryKey: ['instruments', 'derivatives', 'options', 'preview', underlying, expiry, 'PE', showPreview],
+    queryFn: async () => {
+      if (!accessToken || !underlying || !expiry || !showPreview) return { items: [] }
+      return instrumentsApi.derivativeOptions(accessToken, {
+        underlying,
+        expiry,
+        exchange: 'NSE_FNO',
+        option_type: 'PE',
+        limit: 800,
+      })
+    },
+    enabled: Boolean(accessToken) && Boolean(underlying) && Boolean(expiry) && showPreview,
+  })
+
+  const previewFutures = useQuery({
+    queryKey: ['instruments', 'search', 'futures', underlying, showPreview],
+    queryFn: async () => {
+      if (!accessToken || !underlying || !showPreview) return { items: [] }
+      return instrumentsApi.searchInstruments(accessToken, { q: underlying, limit: 20, instrument_type: 'FUTURE' })
+    },
+    enabled: Boolean(accessToken) && Boolean(underlying) && showPreview,
+  })
+
+  const previewChain = useMemo(() => {
+    const ceItems = previewCe.data?.items ?? EMPTY_INSTRUMENTS
+    const peItems = previewPe.data?.items ?? EMPTY_INSTRUMENTS
+    const ceByStrike = new Map<number, instrumentsApi.InstrumentOut>()
+    const peByStrike = new Map<number, instrumentsApi.InstrumentOut>()
+    const strikes: number[] = []
+
+    for (const i of ceItems) {
+      if (typeof i.strike !== 'number' || !Number.isFinite(i.strike)) continue
+      ceByStrike.set(i.strike, i)
+      strikes.push(i.strike)
+    }
+    for (const i of peItems) {
+      if (typeof i.strike !== 'number' || !Number.isFinite(i.strike)) continue
+      peByStrike.set(i.strike, i)
+      strikes.push(i.strike)
+    }
+    const uniqueStrikes = Array.from(new Set(strikes)).sort((a, b) => a - b)
+    const atm = computeAtmStrike(uniqueStrikes, { spot: chainSpot, anchorStrike: null })
+    const idx = atm != null ? uniqueStrikes.findIndex((s) => s === atm) : -1
+    const anchor = idx >= 0 ? idx : Math.floor((uniqueStrikes.length - 1) / 2)
+    const start = Math.max(0, anchor - strikeWindow)
+    const end = Math.min(uniqueStrikes.length, anchor + strikeWindow + 1)
+    const windowStrikes = uniqueStrikes.slice(start, end)
+
+    return { ceByStrike, peByStrike, strikes: windowStrikes, atmStrike: atm }
+  }, [chainSpot, previewCe.data, previewPe.data, strikeWindow])
+
+  const previewFuturesList = useMemo(() => {
+    const today = startOfToday()
+    const items = previewFutures.data?.items ?? EMPTY_INSTRUMENTS
+    return items
+      .filter((i) => i.instrument_type === 'FUTURE')
+      .filter((i) => (i.underlying ?? i.symbol_root ?? '').trim().toUpperCase() === (underlying ?? '').trim().toUpperCase())
+      .filter((i) => (i.expiry ? isNotPastIso(i.expiry, today) : true))
+      .sort((a, b) => {
+        const ea = a.expiry ?? ''
+        const eb = b.expiry ?? ''
+        if (ea !== eb) return ea < eb ? -1 : 1
+        return a.display_symbol.localeCompare(b.display_symbol)
+      })
+      .slice(0, 6)
+  }, [previewFutures.data, underlying])
 
   const onBrokerChange = async (next: string) => {
     const nextValue = next === '' ? null : next
@@ -329,12 +697,9 @@ export function SearchPage() {
 
   const onSyncFno = async () => {
     if (!accessToken) return
-    const underlyings = syncUnderlyings
-      .split(',')
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean)
+    const underlyings = parseUnderlyingsCsv(syncUnderlyings)
     if (!underlyings.length) {
-      setSyncMsg('Enter at least one underlying (e.g. NIFTY,BANKNIFTY) to sync F&O.')
+      setSyncMsg('Select at least one underlying in “F&O universe” to sync F&O.')
       return
     }
     setSyncBusy(true)
@@ -358,12 +723,9 @@ export function SearchPage() {
 
   const onSyncZerodhaNfo = async () => {
     if (!accessToken) return
-    const underlyings = syncUnderlyings
-      .split(',')
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean)
+    const underlyings = parseUnderlyingsCsv(syncUnderlyings)
     if (!underlyings.length) {
-      setSyncMsg('Enter at least one underlying (e.g. NIFTY,BANKNIFTY) to sync Zerodha F&O mappings.')
+      setSyncMsg('Select at least one underlying in “F&O universe” to sync Zerodha F&O mappings.')
       return
     }
     setSyncBusy(true)
@@ -384,28 +746,7 @@ export function SearchPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-end gap-2">
-        <h1 className="sr-only">Search</h1>
-        <div className="text-xs text-muted-foreground">Broker context</div>
-        <select
-          aria-label="Broker context"
-          value={selectedBroker ?? ''}
-          onChange={(e) => void onBrokerChange(e.target.value)}
-          disabled={brokerBusy}
-          className={cn(
-            'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
-            'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-          )}
-        >
-          <option value="">None</option>
-          {BROKER_OPTIONS.map((b) => (
-            <option key={b.key} value={b.key}>
-              {b.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
+      <h1 className="sr-only">Search</h1>
       <Card>
         <CardHeader>
           <CardTitle>Instrument registry sync</CardTitle>
@@ -414,26 +755,29 @@ export function SearchPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" size="sm" onClick={() => void onSyncEquities()} disabled={syncBusy}>
-              Sync equities (NSE/BSE)
-            </Button>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                value={syncUnderlyings}
-                onChange={(e) => setSyncUnderlyings(e.target.value)}
-                placeholder="NIFTY,BANKNIFTY"
-                className="w-64"
-                aria-label="F&O underlyings to sync"
-              />
-              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncFno()} disabled={syncBusy}>
-                Sync F&amp;O (underlyings)
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncZerodhaNfo()} disabled={syncBusy}>
-                Sync Zerodha NFO mappings
-              </Button>
-            </div>
-          </div>
+	          <div className="flex flex-wrap items-center gap-2">
+	            <Button type="button" size="sm" onClick={() => void onSyncEquities()} disabled={syncBusy}>
+	              Sync equities (NSE/BSE)
+	            </Button>
+	            <div className="flex flex-wrap items-center gap-2">
+	              <Button
+	                type="button"
+	                size="sm"
+	                variant="outline"
+	                onClick={() => setFnoUniverseOpen(true)}
+	                disabled={syncBusy}
+	                title={syncUnderlyings}
+	              >
+	                F&amp;O universe {fnoSelectedCount ? `(${fnoSelectedCount})` : ''}
+	              </Button>
+	              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncFno()} disabled={syncBusy}>
+	                Sync F&amp;O (underlyings)
+	              </Button>
+	              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncZerodhaNfo()} disabled={syncBusy}>
+	                Sync Zerodha NFO mappings
+	              </Button>
+	            </div>
+	          </div>
           {syncMsg ? (
             <div className={cn('text-xs', syncMsg.toLowerCase().includes('fail') ? 'text-destructive' : 'text-muted-foreground')}>
               {syncMsg}
@@ -446,164 +790,877 @@ export function SearchPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Instrument search</CardTitle>
-          <CardDescription>
-            Search equities, indices, futures, and options using canonical registry fields.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search: INFY, RELIANCE, NIFTY, BANKNIFTY…"
-              className="max-w-xl"
-              aria-label="Instrument search query"
-            />
-            <select
-              aria-label="Instrument type filter"
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value as typeof filterType)}
-              className={cn(
-                'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
-                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-              )}
-            >
-              <option value="all">All</option>
-              <option value="EQUITY">Equity</option>
-              <option value="INDEX">Index</option>
-              <option value="FUTURE">Future</option>
-              <option value="OPTION">Option</option>
-              <option value="ETF">ETF</option>
-            </select>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setQ('')}
-              disabled={!q.trim()}
-            >
-              Clear
-            </Button>
+      <Dialog open={fnoUniverseOpen} onOpenChange={setFnoUniverseOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>F&amp;O universe</DialogTitle>
+            <DialogDescription>
+              Pick which underlyings should be synced for futures/options. This affects F&amp;O availability in watchlist search and strike previews.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-3 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                value={fnoUniverseFilter}
+                onChange={(e) => setFnoUniverseFilter(e.target.value)}
+                placeholder="Filter symbols…"
+                className="h-9 max-w-xs"
+                aria-label="Filter F&O universe symbols"
+              />
+              <Button type="button" size="sm" variant="outline" onClick={resetFnoUniverseToCommon}>
+                Use common list
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={clearFnoUniverse}>
+                Clear
+              </Button>
+              <div className="text-xs text-muted-foreground">
+                Selected{' '}
+                <span className="font-medium tabular-nums text-foreground">
+                  {fnoUniverseSelected.length}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="overflow-hidden rounded-lg border bg-card">
+                <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">Common</div>
+                <div className="max-h-72 overflow-auto p-2">
+                  {fnoUniverseCommonFiltered.map((u) => (
+                    <label
+                      key={u}
+                      className={cn(
+                        'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm',
+                        'hover:bg-accent/40',
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary"
+                        checked={fnoUniverseSelectedSet.has(u)}
+                        onChange={() => toggleFnoUniverse(u)}
+                      />
+                      <span className="font-medium">{u}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-lg border bg-card">
+                <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">Custom</div>
+                <div className="space-y-2 p-3">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={fnoUniverseAdd}
+                      onChange={(e) => setFnoUniverseAdd(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          addCustomFnoUniverse()
+                        }
+                      }}
+                      placeholder="Add symbol e.g. HDFCBANK"
+                      className="h-9"
+                      aria-label="Add custom underlying"
+                    />
+                    <Button type="button" size="sm" onClick={addCustomFnoUniverse} disabled={!fnoUniverseAdd.trim()}>
+                      Add
+                    </Button>
+                  </div>
+
+                  <div className="max-h-60 overflow-auto rounded-md border bg-muted/10 p-2">
+                    {fnoUniverseCustomFiltered.length ? (
+                      <div className="space-y-0.5">
+                        {fnoUniverseCustomFiltered.map((u) => (
+                          <label
+                            key={u}
+                            className={cn(
+                              'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm',
+                              'hover:bg-accent/40',
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-primary"
+                              checked={fnoUniverseSelectedSet.has(u)}
+                              onChange={() => toggleFnoUniverse(u)}
+                            />
+                            <span className="font-medium">{u}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">No custom symbols yet.</div>
+                    )}
+                  </div>
+
+                  <div className="text-xs text-muted-foreground">
+                    Tip: you can paste comma-separated symbols (e.g. <span className="font-medium">HDFCBANK,SBIN</span>).
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-md border bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
+              Current selection:{' '}
+              <span className="font-medium text-foreground">
+                {(() => {
+                  const list = fnoUniverseSelected.slice().sort((a, b) => a.localeCompare(b))
+                  if (!list.length) return '—'
+                  const shown = list.slice(0, 8)
+                  const rest = list.length - shown.length
+                  return rest > 0 ? `${shown.join(', ')} +${rest} more` : shown.join(', ')
+                })()}
+              </span>
+            </div>
           </div>
 
-          {search.isFetching ? (
-            <div className="text-xs text-muted-foreground">Searching…</div>
-          ) : null}
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" onClick={() => setFnoUniverseOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={applyFnoUniverse}>
+              Apply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-          {search.isError ? (
-            <div className="text-xs text-destructive">
-              Search failed. Open DevTools → Network → <span className="font-mono">/api/v1/instruments/search</span> for details.
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1.5">
+              <CardTitle>Instrument search</CardTitle>
+              <CardDescription>
+                Search equities, indices, futures, and options using canonical registry fields.
+              </CardDescription>
             </div>
-          ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-xs text-muted-foreground">Broker context</div>
+              <select
+                aria-label="Broker context"
+                value={selectedBroker ?? ''}
+                onChange={(e) => void onBrokerChange(e.target.value)}
+                disabled={brokerBusy}
+                className={cn(
+                  'h-9 rounded-md border border-input bg-card px-2 text-sm outline-none shadow-sm',
+                  'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                )}
+              >
+                <option value="">None</option>
+                {BROKER_OPTIONS.map((b) => (
+                  <option key={b.key} value={b.key}>
+                    {b.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </CardHeader>
+	        <CardContent className="space-y-3">
+	          <div className="flex flex-wrap items-center gap-2">
+	            <Input
+	              value={q}
+	              onChange={(e) => setQ(e.target.value)}
+	              placeholder="Search: INFY, RELIANCE, NIFTY, BANKNIFTY…"
+	              className="max-w-xl"
+	              aria-label="Instrument search query"
+	            />
+	            <div className="flex items-center gap-1 rounded-md border bg-muted/40 p-1 shadow-sm">
+	              <Button
+	                type="button"
+	                size="sm"
+	                variant={searchMode === 'all' ? 'secondary' : 'ghost'}
+	                onClick={() => setSearchMode('all')}
+	              >
+	                All
+	              </Button>
+	              <Button
+	                type="button"
+	                size="sm"
+	                variant={searchMode === 'cash' ? 'secondary' : 'ghost'}
+	                onClick={() => setSearchMode('cash')}
+	              >
+	                Stocks/ETF/Indices
+	              </Button>
+	              <Button
+	                type="button"
+	                size="sm"
+	                variant={searchMode === 'fno' ? 'secondary' : 'ghost'}
+	                onClick={() => setSearchMode('fno')}
+	              >
+	                F&amp;O
+	              </Button>
+	            </div>
+	            <Button
+	              type="button"
+	              variant="outline"
+	              size="sm"
+	              onClick={() => setQ('')}
+	              disabled={!q.trim()}
+	            >
+	              Clear
+	            </Button>
+	          </div>
 
-          {debouncedQ && !results.length && !search.isFetching && !search.isError ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>
-                No matches{filterType !== 'all' ? ` in ${filterType}` : ''}.
-              </span>
-              {filterType !== 'all' ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setFilterType('all')}
-                >
-                  Try All
-                </Button>
-              ) : null}
-              <span className="text-muted-foreground/80">
-                If you reset the DB, run Sync equities (stocks/ETFs) and Sync F&amp;O (underlyings) for options/futures.
-              </span>
-            </div>
-          ) : null}
+	          {rawSearch.isFetching || fnoContracts.isFetching ? (
+	            <div className="text-xs text-muted-foreground">Searching…</div>
+	          ) : null}
 
-          {results.length ? (
-            <div className="divide-y rounded-lg border bg-card">
-              {results.map((i) => {
-                const suffix = formatDerivativeSuffix(i)
-                const canStockTrade =
-                  i.segment === 'EQUITY' &&
-                  (i.instrument_type === 'EQUITY' || i.instrument_type === 'ETF')
-                const canFnoTrade =
-                  (i.exchange === 'NSE_FNO' || i.exchange === 'BSE_FNO') &&
-                  (i.instrument_type === 'OPTION' || i.instrument_type === 'FUTURE')
-                return (
-                  <div key={i.canonical_id} className="flex flex-wrap items-center justify-between gap-3 p-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="font-medium">{formatInstrumentTitle(i)}</div>
-                        <TypeBadge instrument={i} />
-                        <Badge variant="outline">{i.exchange}</Badge>
-                        <Badge variant="outline">{i.segment}</Badge>
-                      </div>
-                      {suffix ? (
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {suffix}
-                        </div>
-                      ) : null}
-                      <div className="mt-1 break-all text-xs text-muted-foreground">
-                        {i.canonical_id}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void addToWatchlist.mutate(i.canonical_id)}
-                        disabled={!accessToken}
-                      >
-                        Add
-                      </Button>
-                      {canStockTrade ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setStockLaunch({
-                              mode: 'contract',
-                              instrument: i,
-                              broker: selectedBroker,
-                            })
-                            setStockDialogOpen(true)
-                          }}
-                        >
-                          Trade
-                        </Button>
-                      ) : canFnoTrade ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            const ref = getPremium(i.canonical_id)
-                            setFnoLaunch({
-                              mode: 'contract',
-                              instrument: i,
-                              broker: selectedBroker,
-                              referencePrice: ref,
-                            })
-                            setFnoDialogOpen(true)
-                          }}
-                        >
-                          Trade
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          ) : null}
-          {watchlistMsg ? (
-            <div className="text-xs text-muted-foreground">{watchlistMsg}</div>
-          ) : null}
-        </CardContent>
-      </Card>
+	          {rawSearch.isError || fnoContracts.isError ? (
+	            <div className="text-xs text-destructive">
+	              Search failed. Open DevTools → Network → <span className="font-mono">/api/v1/instruments/search</span> for details.
+	            </div>
+	          ) : null}
+
+	          {debouncedQ &&
+	          (searchMode === 'cash' || (searchMode === 'all' && fnoUnderlyings.length === 0)) &&
+	          cashSections.equities.length === 0 &&
+	          cashSections.indices.length === 0 &&
+	          cashSections.etfs.length === 0 &&
+	          !rawSearch.isFetching &&
+	          !rawSearch.isError ? (
+	            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+	              <span>No matches.</span>
+	              <span className="text-muted-foreground/80">
+	                If you reset the DB, run Sync equities (stocks/ETFs) and Sync F&amp;O (underlyings) for options/futures.
+	              </span>
+	            </div>
+	          ) : null}
+
+	          {debouncedQ &&
+	          searchMode === 'fno' &&
+	          fnoUnderlyings.length === 0 &&
+	          !fnoContracts.isFetching &&
+	          !fnoContracts.isError ? (
+	            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+	              <span>No F&amp;O underlyings found.</span>
+	              <span className="text-muted-foreground/80">
+	                Run Sync F&amp;O (underlyings) first for this symbol.
+	              </span>
+	            </div>
+	          ) : null}
+
+	          {searchMode !== 'fno' ? (
+	            <div className="space-y-3">
+	              {cashSections.equities.length ? (
+	                <div className="rounded-lg border bg-card overflow-hidden">
+	                  <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">Equity</div>
+	                  <div className="divide-y">
+	                    {cashSections.equities.slice(0, 25).map((i) => {
+	                      const suffix = formatDerivativeSuffix(i)
+	                      return (
+	                        <div key={i.canonical_id} className="flex flex-wrap items-center justify-between gap-3 p-3">
+	                          <div className="min-w-0">
+	                            <div className="flex flex-wrap items-center gap-2">
+	                              <div className="font-medium">{formatInstrumentTitle(i)}</div>
+	                              <TypeBadge instrument={i} />
+	                              <Badge variant="outline">{i.exchange}</Badge>
+	                            </div>
+	                            {suffix ? <div className="mt-1 text-xs text-muted-foreground">{suffix}</div> : null}
+	                            <div className="mt-1 break-all text-xs text-muted-foreground">{i.canonical_id}</div>
+	                          </div>
+	                          <div className="flex items-center gap-2">
+	                            <Button
+	                              type="button"
+	                              size="sm"
+	                              variant="outline"
+	                              onClick={() => void addToWatchlist.mutate({ canonical_id: i.canonical_id })}
+	                              disabled={!accessToken}
+	                            >
+	                              Add
+	                            </Button>
+	                            <Button
+	                              type="button"
+	                              size="sm"
+	                              variant="outline"
+	                              onClick={() => {
+	                                setStockLaunch({ mode: 'contract', instrument: i, broker: selectedBroker })
+	                                setStockDialogOpen(true)
+	                              }}
+	                            >
+	                              Trade
+	                            </Button>
+	                          </div>
+	                        </div>
+	                      )
+	                    })}
+	                  </div>
+	                </div>
+	              ) : null}
+
+	              {cashSections.indices.length ? (
+	                <div className="rounded-lg border bg-card overflow-hidden">
+	                  <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">Index</div>
+	                  <div className="divide-y">
+	                    {cashSections.indices.slice(0, 15).map((i) => {
+	                      const suffix = formatDerivativeSuffix(i)
+	                      return (
+	                        <div key={i.canonical_id} className="flex flex-wrap items-center justify-between gap-3 p-3">
+	                          <div className="min-w-0">
+	                            <div className="flex flex-wrap items-center gap-2">
+	                              <div className="font-medium">{formatInstrumentTitle(i)}</div>
+	                              <TypeBadge instrument={i} />
+	                              <Badge variant="outline">{i.exchange}</Badge>
+	                            </div>
+	                            {suffix ? <div className="mt-1 text-xs text-muted-foreground">{suffix}</div> : null}
+	                            <div className="mt-1 break-all text-xs text-muted-foreground">{i.canonical_id}</div>
+	                          </div>
+	                          <div className="flex items-center gap-2">
+	                            <Button
+	                              type="button"
+	                              size="sm"
+	                              variant="outline"
+	                              onClick={() => void addToWatchlist.mutate({ canonical_id: i.canonical_id })}
+	                              disabled={!accessToken}
+	                            >
+	                              Add
+	                            </Button>
+	                          </div>
+	                        </div>
+	                      )
+	                    })}
+	                  </div>
+	                </div>
+	              ) : null}
+
+	              {cashSections.etfs.length ? (
+	                <div className="rounded-lg border bg-card overflow-hidden">
+	                  <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">ETF</div>
+	                  <div className="divide-y">
+	                    {cashSections.etfs.slice(0, 15).map((i) => {
+	                      const suffix = formatDerivativeSuffix(i)
+	                      return (
+	                        <div key={i.canonical_id} className="flex flex-wrap items-center justify-between gap-3 p-3">
+	                          <div className="min-w-0">
+	                            <div className="flex flex-wrap items-center gap-2">
+	                              <div className="font-medium">{formatInstrumentTitle(i)}</div>
+	                              <TypeBadge instrument={i} />
+	                              <Badge variant="outline">{i.exchange}</Badge>
+	                            </div>
+	                            {suffix ? <div className="mt-1 text-xs text-muted-foreground">{suffix}</div> : null}
+	                            <div className="mt-1 break-all text-xs text-muted-foreground">{i.canonical_id}</div>
+	                          </div>
+	                          <div className="flex items-center gap-2">
+	                            <Button
+	                              type="button"
+	                              size="sm"
+	                              variant="outline"
+	                              onClick={() => void addToWatchlist.mutate({ canonical_id: i.canonical_id })}
+	                              disabled={!accessToken}
+	                            >
+	                              Add
+	                            </Button>
+	                            <Button
+	                              type="button"
+	                              size="sm"
+	                              variant="outline"
+	                              onClick={() => {
+	                                setStockLaunch({ mode: 'contract', instrument: i, broker: selectedBroker })
+	                                setStockDialogOpen(true)
+	                              }}
+	                            >
+	                              Trade
+	                            </Button>
+	                          </div>
+	                        </div>
+	                      )
+	                    })}
+	                  </div>
+	                </div>
+	              ) : null}
+
+	              {searchMode === 'all' && fnoUnderlyings.length ? (
+	                <div className="rounded-lg border bg-card overflow-hidden">
+	                  <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">F&amp;O</div>
+	                  <div className="divide-y">
+	                    {fnoUnderlyings.map((u) => (
+	                      <div key={u.underlying} className="p-3">
+	                        <div className="flex flex-wrap items-center justify-between gap-3">
+	                          <button
+	                            type="button"
+	                            className="min-w-0 truncate font-medium text-left hover:underline"
+	                            onClick={() => {
+	                              const next = u.underlying
+	                              const opening = expandedUnderlying !== next
+	                              setExpandedUnderlying(opening ? next : null)
+	                              if (opening) {
+	                                setStrikeWindow(10)
+	                                setUnderlying(next)
+	                                setUnderlyingQ(next)
+	                              }
+	                            }}
+	                          >
+	                            {u.underlying}
+	                          </button>
+	                          <div className="flex items-center gap-2">
+	                            {u.hasFutures ? <Badge variant="outline">FUT</Badge> : null}
+	                            {u.hasOptions ? <Badge variant="outline">OPT</Badge> : null}
+	                            <Button
+	                              type="button"
+	                              size="sm"
+	                              variant="outline"
+	                              onClick={() => void addToWatchlist.mutate({ underlying: u.underlying })}
+	                              disabled={!accessToken}
+	                            >
+	                              Add underlying
+	                            </Button>
+	                            <Button
+	                              type="button"
+	                              size="sm"
+	                              variant="outline"
+	                              onClick={() => {
+	                                setFnoLaunch({ mode: 'manual', broker: selectedBroker, prefill: { underlying: u.underlying } })
+	                                setUnderlying(u.underlying)
+	                                setUnderlyingQ(u.underlying)
+	                                setFnoDialogOpen(true)
+	                              }}
+	                            >
+	                              Trade
+	                            </Button>
+	                            <Button
+	                              type="button"
+	                              size="sm"
+	                              variant="outline"
+	                              onClick={() => {
+	                                const next = u.underlying
+	                                const opening = expandedUnderlying !== next
+	                                setExpandedUnderlying(opening ? next : null)
+	                                if (opening) {
+	                                  setStrikeWindow(10)
+	                                  setUnderlying(next)
+	                                  setUnderlyingQ(next)
+	                                }
+	                              }}
+	                            >
+	                              {expandedUnderlying === u.underlying ? 'Hide' : 'Show'}
+	                            </Button>
+	                          </div>
+	                        </div>
+
+	                        {expandedUnderlying === u.underlying && underlying === u.underlying ? (
+	                          <div className="mt-3 rounded-md border bg-muted/10 p-3">
+	                            <div className="flex flex-wrap items-center justify-between gap-3">
+	                              <div className="text-xs text-muted-foreground">
+	                                {chainSpot != null ? (
+	                                  <>
+	                                    Spot <span className="font-medium tabular-nums">{chainSpot}</span>
+	                                  </>
+	                                ) : (
+	                                  'Spot: —'
+	                                )}{' '}
+	                                {previewChain.atmStrike != null ? (
+	                                  <>
+	                                    • ATM <span className="font-medium tabular-nums">{previewChain.atmStrike}</span>
+	                                  </>
+	                                ) : null}
+	                              </div>
+	                              <div className="flex items-center gap-2">
+	                                <select
+	                                  aria-label="Expiry"
+	                                  value={expiry ?? ''}
+	                                  onChange={(e) => setExpiry(e.target.value || null)}
+	                                  disabled={!underlying || expiries.isFetching}
+	                                  className={cn(
+	                                    'h-8 rounded-md border border-input bg-card px-2 text-xs outline-none shadow-sm',
+	                                    'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+	                                  )}
+	                                >
+	                                  <option value="">Expiry</option>
+	                                  {validExpiries.map((d) => (
+	                                    <option key={d} value={d}>
+	                                      {d}
+	                                    </option>
+	                                  ))}
+	                                </select>
+	                                <Button
+	                                  type="button"
+	                                  size="sm"
+	                                  variant="outline"
+	                                  onClick={() => setStrikeWindow((w) => (w === 10 ? 20 : 10))}
+	                                  disabled={!expiry}
+	                                >
+	                                  {strikeWindow === 10 ? 'More' : 'Less'}
+	                                </Button>
+	                              </div>
+	                            </div>
+
+	                            {previewFuturesList.length ? (
+	                              <div className="mt-3">
+	                                <div className="text-xs font-medium text-muted-foreground">Futures (upcoming)</div>
+	                                <div className="mt-2 flex flex-col gap-2">
+	                                  {previewFuturesList.map((f) => (
+	                                    <div key={f.canonical_id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-2 py-2">
+	                                      <div className="min-w-0">
+	                                        <div className="font-medium">{formatInstrumentTitle(f)}</div>
+	                                        <div className="mt-0.5 text-xs text-muted-foreground">
+	                                          {f.expiry ?? '—'} • lot {f.lot_size ?? '—'}
+	                                        </div>
+	                                      </div>
+	                                      <div className="flex items-center gap-2">
+	                                        <Button
+	                                          type="button"
+	                                          size="sm"
+	                                          variant="outline"
+	                                          onClick={() => void addToWatchlist.mutate({ canonical_id: f.canonical_id })}
+	                                        >
+	                                          Add
+	                                        </Button>
+	                                        <Button
+	                                          type="button"
+	                                          size="sm"
+	                                          variant="outline"
+	                                          onClick={() => {
+	                                            const ref = getPremium(f.canonical_id)
+	                                            setFnoLaunch({ mode: 'contract', instrument: f, broker: selectedBroker, referencePrice: ref })
+	                                            setFnoDialogOpen(true)
+	                                          }}
+	                                        >
+	                                          Trade
+	                                        </Button>
+	                                      </div>
+	                                    </div>
+	                                  ))}
+	                                </div>
+	                              </div>
+	                            ) : null}
+
+	                            {expiry && previewChain.strikes.length ? (
+	                              <div className="mt-4">
+	                                <div className="text-xs font-medium text-muted-foreground">
+	                                  Options (±{strikeWindow} around ATM) • {expiry}
+	                                </div>
+	                                <div className="mt-2 overflow-auto rounded-md border bg-card">
+	                                  <div className="grid grid-cols-[1fr_auto_1fr] gap-0 text-xs">
+	                                    <div className="border-b px-3 py-2 font-medium text-muted-foreground">Calls</div>
+	                                    <div className="border-b px-3 py-2 font-medium text-muted-foreground text-center">Strike</div>
+	                                    <div className="border-b px-3 py-2 font-medium text-muted-foreground text-right">Puts</div>
+	                                    {previewChain.strikes.map((s) => {
+	                                      const ce = previewChain.ceByStrike.get(s) ?? null
+	                                      const pe = previewChain.peByStrike.get(s) ?? null
+	                                      return (
+	                                        <div key={s} className="contents">
+	                                          <div className="border-b px-3 py-2">
+	                                            {ce ? (
+	                                              <div className="flex items-center gap-2">
+	                                                <Badge variant="outline">CE</Badge>
+	                                                <Button type="button" size="sm" variant="outline" onClick={() => void addToWatchlist.mutate({ canonical_id: ce.canonical_id })}>
+	                                                  Add
+	                                                </Button>
+	                                                <Button
+	                                                  type="button"
+	                                                  size="sm"
+	                                                  variant="outline"
+	                                                  onClick={() => {
+	                                                    const ref = getPremium(ce.canonical_id)
+	                                                    setFnoLaunch({ mode: 'contract', instrument: ce, broker: selectedBroker, referencePrice: ref })
+	                                                    setFnoDialogOpen(true)
+	                                                  }}
+	                                                >
+	                                                  Trade
+	                                                </Button>
+	                                              </div>
+	                                            ) : (
+	                                              <span className="text-muted-foreground">—</span>
+	                                            )}
+	                                          </div>
+	                                          <div className="border-b px-3 py-2 text-center tabular-nums">
+	                                            {formatStrikeDisplay(s)}
+	                                            {previewChain.atmStrike != null && s === previewChain.atmStrike ? (
+	                                              <span className="ml-2 text-[11px] text-muted-foreground">ATM</span>
+	                                            ) : null}
+	                                          </div>
+	                                          <div className="border-b px-3 py-2 flex justify-end">
+	                                            {pe ? (
+	                                              <div className="flex items-center gap-2">
+	                                                <Button type="button" size="sm" variant="outline" onClick={() => void addToWatchlist.mutate({ canonical_id: pe.canonical_id })}>
+	                                                  Add
+	                                                </Button>
+	                                                <Button
+	                                                  type="button"
+	                                                  size="sm"
+	                                                  variant="outline"
+	                                                  onClick={() => {
+	                                                    const ref = getPremium(pe.canonical_id)
+	                                                    setFnoLaunch({ mode: 'contract', instrument: pe, broker: selectedBroker, referencePrice: ref })
+	                                                    setFnoDialogOpen(true)
+	                                                  }}
+	                                                >
+	                                                  Trade
+	                                                </Button>
+	                                                <Badge variant="outline">PE</Badge>
+	                                              </div>
+	                                            ) : (
+	                                              <span className="text-muted-foreground">—</span>
+	                                            )}
+	                                          </div>
+	                                        </div>
+	                                      )
+	                                    })}
+	                                  </div>
+	                                </div>
+	                                <div className="mt-2 text-xs text-muted-foreground">
+	                                  Need deeper strikes? Use “More” or the Strike discovery section below.
+	                                </div>
+	                              </div>
+	                            ) : null}
+	                          </div>
+	                        ) : null}
+	                      </div>
+	                    ))}
+	                  </div>
+	                </div>
+	              ) : null}
+	            </div>
+	          ) : null}
+
+	          {searchMode === 'fno' && fnoUnderlyings.length ? (
+	            <div className="rounded-lg border bg-card overflow-hidden">
+	              <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">F&amp;O underlyings</div>
+	              <div className="divide-y">
+	                {fnoUnderlyings.map((u) => (
+	                  <div key={u.underlying} className="p-3">
+	                    <div className="flex flex-wrap items-center justify-between gap-3">
+	                      <button
+	                        type="button"
+	                        className="min-w-0 truncate font-medium text-left hover:underline"
+	                        onClick={() => {
+	                          const next = u.underlying
+	                          const opening = expandedUnderlying !== next
+	                          setExpandedUnderlying(opening ? next : null)
+	                          if (opening) {
+	                            setStrikeWindow(10)
+	                            setUnderlying(next)
+	                            setUnderlyingQ(next)
+	                          }
+	                        }}
+	                      >
+	                        {u.underlying}
+	                      </button>
+	                      <div className="flex items-center gap-2">
+	                        {u.hasFutures ? <Badge variant="outline">FUT</Badge> : null}
+	                        {u.hasOptions ? <Badge variant="outline">OPT</Badge> : null}
+	                        <Button
+	                          type="button"
+	                          size="sm"
+	                          variant="outline"
+	                          onClick={() => void addToWatchlist.mutate({ underlying: u.underlying })}
+	                          disabled={!accessToken}
+	                        >
+	                          Add underlying
+	                        </Button>
+	                        <Button
+	                          type="button"
+	                          size="sm"
+	                          variant="outline"
+	                          onClick={() => {
+	                            setFnoLaunch({ mode: 'manual', broker: selectedBroker, prefill: { underlying: u.underlying } })
+	                            setUnderlying(u.underlying)
+	                            setUnderlyingQ(u.underlying)
+	                            setFnoDialogOpen(true)
+	                          }}
+	                        >
+	                          Trade
+	                        </Button>
+	                        <Button
+	                          type="button"
+	                          size="sm"
+	                          variant="outline"
+	                          onClick={() => {
+	                            const next = u.underlying
+	                            const opening = expandedUnderlying !== next
+	                            setExpandedUnderlying(opening ? next : null)
+	                            if (opening) {
+	                              setStrikeWindow(10)
+	                              setUnderlying(next)
+	                              setUnderlyingQ(next)
+	                            }
+	                          }}
+	                        >
+	                          {expandedUnderlying === u.underlying ? 'Hide' : 'Show'}
+	                        </Button>
+	                      </div>
+	                    </div>
+
+	                    {expandedUnderlying === u.underlying && underlying === u.underlying ? (
+	                      <div className="mt-3 rounded-md border bg-muted/10 p-3">
+	                        <div className="flex flex-wrap items-center justify-between gap-3">
+	                          <div className="text-xs text-muted-foreground">
+	                            {chainSpot != null ? (
+	                              <>
+	                                Spot <span className="font-medium tabular-nums">{chainSpot}</span>
+	                              </>
+	                            ) : (
+	                              'Spot: —'
+	                            )}{' '}
+	                            {previewChain.atmStrike != null ? (
+	                              <>
+	                                • ATM <span className="font-medium tabular-nums">{previewChain.atmStrike}</span>
+	                              </>
+	                            ) : null}
+	                          </div>
+	                          <div className="flex items-center gap-2">
+	                            <select
+	                              aria-label="Expiry"
+	                              value={expiry ?? ''}
+	                              onChange={(e) => setExpiry(e.target.value || null)}
+	                              disabled={!underlying || expiries.isFetching}
+	                              className={cn(
+	                                'h-8 rounded-md border border-input bg-card px-2 text-xs outline-none shadow-sm',
+	                                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+	                              )}
+	                            >
+	                              <option value="">Expiry</option>
+	                              {validExpiries.map((d) => (
+	                                <option key={d} value={d}>
+	                                  {d}
+	                                </option>
+	                              ))}
+	                            </select>
+	                            <Button
+	                              type="button"
+	                              size="sm"
+	                              variant="outline"
+	                              onClick={() => setStrikeWindow((w) => (w === 10 ? 20 : 10))}
+	                              disabled={!expiry}
+	                            >
+	                              {strikeWindow === 10 ? 'More' : 'Less'}
+	                            </Button>
+	                          </div>
+	                        </div>
+
+	                        {previewFuturesList.length ? (
+	                          <div className="mt-3">
+	                            <div className="text-xs font-medium text-muted-foreground">Futures (upcoming)</div>
+	                            <div className="mt-2 flex flex-col gap-2">
+	                              {previewFuturesList.map((f) => (
+	                                <div key={f.canonical_id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-2 py-2">
+	                                  <div className="min-w-0">
+	                                    <div className="font-medium">{formatInstrumentTitle(f)}</div>
+	                                    <div className="mt-0.5 text-xs text-muted-foreground">
+	                                      {f.expiry ?? '—'} • lot {f.lot_size ?? '—'}
+	                                    </div>
+	                                  </div>
+	                                  <div className="flex items-center gap-2">
+	                                    <Button
+	                                      type="button"
+	                                      size="sm"
+	                                      variant="outline"
+	                                      onClick={() => void addToWatchlist.mutate({ canonical_id: f.canonical_id })}
+	                                    >
+	                                      Add
+	                                    </Button>
+	                                    <Button
+	                                      type="button"
+	                                      size="sm"
+	                                      variant="outline"
+	                                      onClick={() => {
+	                                        const ref = getPremium(f.canonical_id)
+	                                        setFnoLaunch({ mode: 'contract', instrument: f, broker: selectedBroker, referencePrice: ref })
+	                                        setFnoDialogOpen(true)
+	                                      }}
+	                                    >
+	                                      Trade
+	                                    </Button>
+	                                  </div>
+	                                </div>
+	                              ))}
+	                            </div>
+	                          </div>
+	                        ) : null}
+
+	                        {expiry && previewChain.strikes.length ? (
+	                          <div className="mt-4">
+	                            <div className="text-xs font-medium text-muted-foreground">
+	                              Options (±{strikeWindow} around ATM) • {expiry}
+	                            </div>
+	                            <div className="mt-2 overflow-auto rounded-md border bg-card">
+	                              <div className="grid grid-cols-[1fr_auto_1fr] gap-0 text-xs">
+	                                <div className="border-b px-3 py-2 font-medium text-muted-foreground">Calls</div>
+	                                <div className="border-b px-3 py-2 font-medium text-muted-foreground text-center">Strike</div>
+	                                <div className="border-b px-3 py-2 font-medium text-muted-foreground text-right">Puts</div>
+	                                {previewChain.strikes.map((s) => {
+	                                  const ce = previewChain.ceByStrike.get(s) ?? null
+	                                  const pe = previewChain.peByStrike.get(s) ?? null
+	                                  return (
+	                                    <div key={s} className="contents">
+	                                      <div className="border-b px-3 py-2">
+	                                        {ce ? (
+	                                          <div className="flex items-center gap-2">
+	                                            <Badge variant="outline">CE</Badge>
+	                                            <Button type="button" size="sm" variant="outline" onClick={() => void addToWatchlist.mutate({ canonical_id: ce.canonical_id })}>
+	                                              Add
+	                                            </Button>
+	                                            <Button
+	                                              type="button"
+	                                              size="sm"
+	                                              variant="outline"
+	                                              onClick={() => {
+	                                                const ref = getPremium(ce.canonical_id)
+	                                                setFnoLaunch({ mode: 'contract', instrument: ce, broker: selectedBroker, referencePrice: ref })
+	                                                setFnoDialogOpen(true)
+	                                              }}
+	                                            >
+	                                              Trade
+	                                            </Button>
+	                                          </div>
+	                                        ) : (
+	                                          <span className="text-muted-foreground">—</span>
+	                                        )}
+	                                      </div>
+	                                      <div className="border-b px-3 py-2 text-center tabular-nums">
+	                                        {formatStrikeDisplay(s)}
+	                                        {previewChain.atmStrike != null && s === previewChain.atmStrike ? (
+	                                          <span className="ml-2 text-[11px] text-muted-foreground">ATM</span>
+	                                        ) : null}
+	                                      </div>
+	                                      <div className="border-b px-3 py-2 flex justify-end">
+	                                        {pe ? (
+	                                          <div className="flex items-center gap-2">
+	                                            <Button type="button" size="sm" variant="outline" onClick={() => void addToWatchlist.mutate({ canonical_id: pe.canonical_id })}>
+	                                              Add
+	                                            </Button>
+	                                            <Button
+	                                              type="button"
+	                                              size="sm"
+	                                              variant="outline"
+	                                              onClick={() => {
+	                                                const ref = getPremium(pe.canonical_id)
+	                                                setFnoLaunch({ mode: 'contract', instrument: pe, broker: selectedBroker, referencePrice: ref })
+	                                                setFnoDialogOpen(true)
+	                                              }}
+	                                            >
+	                                              Trade
+	                                            </Button>
+	                                            <Badge variant="outline">PE</Badge>
+	                                          </div>
+	                                        ) : (
+	                                          <span className="text-muted-foreground">—</span>
+	                                        )}
+	                                      </div>
+	                                    </div>
+	                                  )
+	                                })}
+	                              </div>
+	                            </div>
+	                            <div className="mt-2 text-xs text-muted-foreground">
+	                              Need deeper strikes? Use “More” or the Strike discovery section below.
+	                            </div>
+	                          </div>
+	                        ) : null}
+	                      </div>
+	                    ) : null}
+	                  </div>
+	                ))}
+	              </div>
+	            </div>
+	          ) : null}
+
+	          {watchlistMsg ? (
+	            <div className="text-xs text-muted-foreground">{watchlistMsg}</div>
+	          ) : null}
+	        </CardContent>
+	      </Card>
 
       <Card>
         <CardHeader>
@@ -683,7 +1740,7 @@ export function SearchPage() {
                 )}
               >
                 <option value="">Select expiry</option>
-                {(expiries.data?.expiries ?? []).map((d) => (
+                {validExpiries.map((d) => (
                   <option key={d} value={d}>
                     {d}
                   </option>
@@ -692,9 +1749,9 @@ export function SearchPage() {
               {expiries.isFetching ? (
                 <div className="text-xs text-muted-foreground">Loading expiries…</div>
               ) : null}
-              {underlying && !expiries.isFetching && (expiries.data?.expiries ?? []).length === 0 ? (
+              {underlying && !expiries.isFetching && validExpiries.length === 0 ? (
                 <div className="text-xs text-muted-foreground">
-                  No expiries found. Sync F&amp;O for {underlying} first.
+                  No upcoming expiries found. Sync F&amp;O for {underlying} first.
                 </div>
               ) : null}
             </div>
@@ -777,7 +1834,7 @@ export function SearchPage() {
                         type="button"
                         size="sm"
                         variant="outline"
-                        onClick={() => void addToWatchlist.mutate(i.canonical_id)}
+                        onClick={() => void addToWatchlist.mutate({ canonical_id: i.canonical_id })}
                         disabled={!accessToken}
                       >
                         Add
