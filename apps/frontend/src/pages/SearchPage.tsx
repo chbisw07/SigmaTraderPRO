@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import * as instrumentsApi from '@/lib/api/instruments'
 import * as quotesApi from '@/lib/api/quotes'
@@ -31,6 +32,25 @@ function useDebounced(value: string, delayMs = 250) {
     return () => window.clearTimeout(handle)
   }, [value, delayMs])
   return debounced
+}
+
+function parseUnderlyingsCsv(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean)
+}
+
+function uniqueSortedCsv(items: Iterable<string>): string {
+  return Array.from(
+    new Set(
+      Array.from(items)
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  )
+    .sort((a, b) => a.localeCompare(b))
+    .join(',')
 }
 
 function startOfToday(): Date {
@@ -129,8 +149,9 @@ type BrokerKey = (typeof BROKER_OPTIONS)[number]['key']
 const EMPTY_INSTRUMENTS: instrumentsApi.InstrumentOut[] = []
 
 const ACTIVE_WATCHLIST_KEY = 'sigmatraderpro.watchlist.active_id'
+const FNO_UNIVERSE_KEY = 'sigmatraderpro.fno.universe'
 
-const COMMON_FNO_UNDERLYINGS = [
+const COMMON_FNO_UNDERLYINGS_LIST = [
   'NIFTY',
   'BANKNIFTY',
   'FINNIFTY',
@@ -165,7 +186,9 @@ const COMMON_FNO_UNDERLYINGS = [
   'JSWSTEEL',
   'TATASTEEL',
   'COALINDIA',
-].join(',')
+] as const
+
+const COMMON_FNO_UNDERLYINGS_SET = new Set<string>(COMMON_FNO_UNDERLYINGS_LIST as unknown as string[])
 
 function safeStoredActiveWatchlistId(): number | null {
   if (typeof window === 'undefined') return null
@@ -174,6 +197,18 @@ function safeStoredActiveWatchlistId(): number | null {
     if (!raw) return null
     const v = Number(raw)
     return Number.isFinite(v) ? v : null
+  } catch {
+    return null
+  }
+}
+
+function safeStoredFnoUniverseCsv(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(FNO_UNIVERSE_KEY)
+    if (!raw) return null
+    const list = parseUnderlyingsCsv(raw)
+    return list.length ? uniqueSortedCsv(list) : null
   } catch {
     return null
   }
@@ -196,7 +231,12 @@ export function SearchPage() {
   const [syncBusy, setSyncBusy] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const [watchlistMsg, setWatchlistMsg] = useState<string | null>(null)
-  const [syncUnderlyings, setSyncUnderlyings] = useState('NIFTY,BANKNIFTY')
+  const [syncUnderlyings, setSyncUnderlyings] = useState(() => safeStoredFnoUniverseCsv() ?? 'NIFTY,BANKNIFTY')
+  const [fnoUniverseOpen, setFnoUniverseOpen] = useState(false)
+  const [fnoUniverseFilter, setFnoUniverseFilter] = useState('')
+  const [fnoUniverseAdd, setFnoUniverseAdd] = useState('')
+  const [fnoUniverseSelected, setFnoUniverseSelected] = useState<string[]>([])
+  const [fnoUniverseCustomPool, setFnoUniverseCustomPool] = useState<string[]>([])
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
   const [stockLaunch, setStockLaunch] = useState<
     | { mode: 'manual'; broker?: BrokerKey | null }
@@ -225,6 +265,76 @@ export function SearchPage() {
   const debouncedQ = useDebounced(q.trim(), 300)
 
   const setEntryGroup = useWatchlistStructureStore((s) => s.setEntryGroup)
+
+  const fnoSelectedCount = useMemo(() => parseUnderlyingsCsv(syncUnderlyings).length, [syncUnderlyings])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(FNO_UNIVERSE_KEY, syncUnderlyings)
+    } catch {
+      // ignore
+    }
+  }, [syncUnderlyings])
+
+  useEffect(() => {
+    if (!fnoUniverseOpen) return
+    const current = parseUnderlyingsCsv(syncUnderlyings)
+    setFnoUniverseSelected(current)
+    setFnoUniverseCustomPool(current.filter((u) => !COMMON_FNO_UNDERLYINGS_SET.has(u)))
+    setFnoUniverseFilter('')
+    setFnoUniverseAdd('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fnoUniverseOpen])
+
+  const toggleFnoUniverse = (u: string) => {
+    setFnoUniverseSelected((prev) => {
+      const next = u.trim().toUpperCase()
+      if (!next) return prev
+      return prev.includes(next) ? prev.filter((x) => x !== next) : [...prev, next]
+    })
+  }
+
+  const fnoUniverseCommonFiltered = useMemo(() => {
+    const needle = fnoUniverseFilter.trim().toUpperCase()
+    const items = COMMON_FNO_UNDERLYINGS_LIST as unknown as string[]
+    if (!needle) return items
+    return items.filter((x) => x.includes(needle))
+  }, [fnoUniverseFilter])
+
+  const fnoUniverseCustomFiltered = useMemo(() => {
+    const needle = fnoUniverseFilter.trim().toUpperCase()
+    const items = fnoUniverseCustomPool
+    if (!needle) return items
+    return items.filter((x) => x.includes(needle))
+  }, [fnoUniverseCustomPool, fnoUniverseFilter])
+
+  const fnoUniverseSelectedSet = useMemo(() => new Set(fnoUniverseSelected), [fnoUniverseSelected])
+
+  const addCustomFnoUniverse = () => {
+    const adds = parseUnderlyingsCsv(fnoUniverseAdd)
+    if (!adds.length) return
+    setFnoUniverseCustomPool((prev) => {
+      const next = new Set(prev.map((s) => s.trim().toUpperCase()).filter(Boolean))
+      for (const u of adds) next.add(u)
+      return Array.from(next).sort((a, b) => a.localeCompare(b))
+    })
+    setFnoUniverseSelected((prev) => uniqueSortedCsv([...prev, ...adds]).split(',').filter(Boolean))
+    setFnoUniverseAdd('')
+  }
+
+  const applyFnoUniverse = () => {
+    setSyncUnderlyings(uniqueSortedCsv(fnoUniverseSelected))
+    setFnoUniverseOpen(false)
+  }
+
+  const resetFnoUniverseToCommon = () => {
+    setFnoUniverseSelected((COMMON_FNO_UNDERLYINGS_LIST as unknown as string[]).slice())
+  }
+
+  const clearFnoUniverse = () => {
+    setFnoUniverseSelected([])
+  }
 
   const addToWatchlist = useMutation({
     mutationFn: async (payload: { canonical_id?: string | null; underlying?: string | null }) => {
@@ -587,12 +697,9 @@ export function SearchPage() {
 
   const onSyncFno = async () => {
     if (!accessToken) return
-    const underlyings = syncUnderlyings
-      .split(',')
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean)
+    const underlyings = parseUnderlyingsCsv(syncUnderlyings)
     if (!underlyings.length) {
-      setSyncMsg('Enter at least one underlying (e.g. NIFTY,BANKNIFTY) to sync F&O.')
+      setSyncMsg('Select at least one underlying in “F&O universe” to sync F&O.')
       return
     }
     setSyncBusy(true)
@@ -616,12 +723,9 @@ export function SearchPage() {
 
   const onSyncZerodhaNfo = async () => {
     if (!accessToken) return
-    const underlyings = syncUnderlyings
-      .split(',')
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean)
+    const underlyings = parseUnderlyingsCsv(syncUnderlyings)
     if (!underlyings.length) {
-      setSyncMsg('Enter at least one underlying (e.g. NIFTY,BANKNIFTY) to sync Zerodha F&O mappings.')
+      setSyncMsg('Select at least one underlying in “F&O universe” to sync Zerodha F&O mappings.')
       return
     }
     setSyncBusy(true)
@@ -672,35 +776,29 @@ export function SearchPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" size="sm" onClick={() => void onSyncEquities()} disabled={syncBusy}>
-              Sync equities (NSE/BSE)
-            </Button>
-            <div className="flex flex-wrap items-center gap-2">
-	              <Input
-	                value={syncUnderlyings}
-	                onChange={(e) => setSyncUnderlyings(e.target.value)}
-	                placeholder="NIFTY,BANKNIFTY"
-	                className="w-64"
-	                aria-label="F&O underlyings to sync"
-	              />
+	          <div className="flex flex-wrap items-center gap-2">
+	            <Button type="button" size="sm" onClick={() => void onSyncEquities()} disabled={syncBusy}>
+	              Sync equities (NSE/BSE)
+	            </Button>
+	            <div className="flex flex-wrap items-center gap-2">
 	              <Button
 	                type="button"
 	                size="sm"
 	                variant="outline"
-	                onClick={() => setSyncUnderlyings(COMMON_FNO_UNDERLYINGS)}
+	                onClick={() => setFnoUniverseOpen(true)}
 	                disabled={syncBusy}
+	                title={syncUnderlyings}
 	              >
-	                Common list
+	                F&amp;O universe {fnoSelectedCount ? `(${fnoSelectedCount})` : ''}
 	              </Button>
 	              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncFno()} disabled={syncBusy}>
 	                Sync F&amp;O (underlyings)
 	              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncZerodhaNfo()} disabled={syncBusy}>
-                Sync Zerodha NFO mappings
-              </Button>
-            </div>
-          </div>
+	              <Button type="button" size="sm" variant="outline" onClick={() => void onSyncZerodhaNfo()} disabled={syncBusy}>
+	                Sync Zerodha NFO mappings
+	              </Button>
+	            </div>
+	          </div>
           {syncMsg ? (
             <div className={cn('text-xs', syncMsg.toLowerCase().includes('fail') ? 'text-destructive' : 'text-muted-foreground')}>
               {syncMsg}
@@ -712,6 +810,142 @@ export function SearchPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={fnoUniverseOpen} onOpenChange={setFnoUniverseOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>F&amp;O universe</DialogTitle>
+            <DialogDescription>
+              Pick which underlyings should be synced for futures/options. This affects F&amp;O availability in watchlist search and strike previews.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-3 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                value={fnoUniverseFilter}
+                onChange={(e) => setFnoUniverseFilter(e.target.value)}
+                placeholder="Filter symbols…"
+                className="h-9 max-w-xs"
+                aria-label="Filter F&O universe symbols"
+              />
+              <Button type="button" size="sm" variant="outline" onClick={resetFnoUniverseToCommon}>
+                Use common list
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={clearFnoUniverse}>
+                Clear
+              </Button>
+              <div className="text-xs text-muted-foreground">
+                Selected{' '}
+                <span className="font-medium tabular-nums text-foreground">
+                  {fnoUniverseSelected.length}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="overflow-hidden rounded-lg border bg-card">
+                <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">Common</div>
+                <div className="max-h-72 overflow-auto p-2">
+                  {fnoUniverseCommonFiltered.map((u) => (
+                    <label
+                      key={u}
+                      className={cn(
+                        'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm',
+                        'hover:bg-accent/40',
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary"
+                        checked={fnoUniverseSelectedSet.has(u)}
+                        onChange={() => toggleFnoUniverse(u)}
+                      />
+                      <span className="font-medium">{u}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-lg border bg-card">
+                <div className="bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">Custom</div>
+                <div className="space-y-2 p-3">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={fnoUniverseAdd}
+                      onChange={(e) => setFnoUniverseAdd(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          addCustomFnoUniverse()
+                        }
+                      }}
+                      placeholder="Add symbol e.g. HDFCBANK"
+                      className="h-9"
+                      aria-label="Add custom underlying"
+                    />
+                    <Button type="button" size="sm" onClick={addCustomFnoUniverse} disabled={!fnoUniverseAdd.trim()}>
+                      Add
+                    </Button>
+                  </div>
+
+                  <div className="max-h-60 overflow-auto rounded-md border bg-muted/10 p-2">
+                    {fnoUniverseCustomFiltered.length ? (
+                      <div className="space-y-0.5">
+                        {fnoUniverseCustomFiltered.map((u) => (
+                          <label
+                            key={u}
+                            className={cn(
+                              'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm',
+                              'hover:bg-accent/40',
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-primary"
+                              checked={fnoUniverseSelectedSet.has(u)}
+                              onChange={() => toggleFnoUniverse(u)}
+                            />
+                            <span className="font-medium">{u}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">No custom symbols yet.</div>
+                    )}
+                  </div>
+
+                  <div className="text-xs text-muted-foreground">
+                    Tip: you can paste comma-separated symbols (e.g. <span className="font-medium">HDFCBANK,SBIN</span>).
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-md border bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
+              Current selection:{' '}
+              <span className="font-medium text-foreground">
+                {(() => {
+                  const list = fnoUniverseSelected.slice().sort((a, b) => a.localeCompare(b))
+                  if (!list.length) return '—'
+                  const shown = list.slice(0, 8)
+                  const rest = list.length - shown.length
+                  return rest > 0 ? `${shown.join(', ')} +${rest} more` : shown.join(', ')
+                })()}
+              </span>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" onClick={() => setFnoUniverseOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={applyFnoUniverse}>
+              Apply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>
